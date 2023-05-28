@@ -298,12 +298,6 @@ async def play_Yandex_Music_url(interaction: discord.Interaction, url_or_trackna
         play_now = f"\nТрек: {track.title}\nИсполнители: {artist_all}\n"
     audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
 
-    # if not await check_audio_file(audio_file_path):
-    #     # Изменяем параметры трека
-    #     audio = AudioSegment.from_file(audio_file_path)
-    #     audio = audio.set_frame_rate(96000).set_channels(2)
-    #     audio.export(audio_file_path, format="mp3")
-
     return [play_now, audio_file_path]
 async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_trackname_or_filepath, user_discord):
     global data_servers
@@ -460,12 +454,6 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
 
     audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
 
-    # if not await check_audio_file(audio_file_path):
-    #     # Изменяем параметры трека
-    #     audio = AudioSegment.from_file(audio_file_path)
-    #     audio = audio.set_frame_rate(48000).set_channels(2)
-    #     audio.export(audio_file_path, format="mp3")
-
     return [play_now, audio_file_path]
 async def send_search_request(interaction: discord.Interaction, query, user_discord):
     global data_servers
@@ -521,12 +509,6 @@ async def send_search_request(interaction: discord.Interaction, query, user_disc
             data_servers[interaction.guild.name]['cover_url'] = None
 
         audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
-
-        # if not await check_audio_file(audio_file_path):
-        #     # Изменяем параметры трека
-        #     audio = AudioSegment.from_file(audio_file_path)
-        #     audio = audio.set_frame_rate(96000).set_channels(2)
-        #     audio.export(audio_file_path, format="mp3")
 
         return [play_now, audio_file_path]
     else:
@@ -691,19 +673,6 @@ class next_button(Button):
         voice_client = interaction.guild.voice_client
         voice_client.stop()
         data_servers[interaction.guild.name]['repeat_flag'] = False
-        # if data_servers[interaction.guild.name]['radio_check'] or data_servers[interaction.guild.name][
-        #     'stream_by_track_check']:
-        #     data_servers[interaction.guild.name]['task'].cancel()
-        #     await play_radio(interaction=interaction)
-        # else:
-        #     data_servers[interaction.guild.name]['index_play_now'] += 1
-        #     try:
-        #         data_servers[interaction.guild.name]['task'].cancel()
-        #     except Exception as e:
-        #         await interaction.response.send_message(f"Произошла ошибка: {e}", ephemeral=True)
-        #     data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[
-        #         interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]))
-        #     data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
 class prev_button(Button):
     def __init__(self, interaction: discord.Interaction):
         super().__init__(style=ButtonStyle.primary,
@@ -720,16 +689,6 @@ class prev_button(Button):
         voice_client.stop()
         data_servers[interaction.guild.name]['index_play_now'] -= 2
         data_servers[interaction.guild.name]['repeat_flag'] = False
-        # try:
-        #     data_servers[interaction.guild.name]['task'].cancel()
-        # except Exception as e:
-        #     await interaction.response.send_message(f"Произошла ошибка: {e}", ephemeral=True)
-        # data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction,
-        #                                                                         data_servers[interaction.guild.name][
-        #                                                                             'playlist'][data_servers[
-        #                                                                             interaction.guild.name][
-        #                                                                             'index_play_now']]))
-        # data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
 class pause_resume_button(Button):
     def __init__(self):
         super().__init__(style=ButtonStyle.primary, label="Пауза/Продолжить", emoji="⏯️", row=1)
@@ -817,7 +776,7 @@ class stream_by_track_button(Button):
             voice_client.stop()
             data_servers[interaction.guild.name]['task'].cancel()
         await play_radio(interaction=interaction,
-                         user_discord=interaction.user,
+                         user_discord=data_servers[interaction.guild.name]['user_discord_radio'],
                          first=True,
                          station_id='track:' + data_servers[interaction.guild.name]['track_id_play_now'],
                          station_from='track',
@@ -860,8 +819,6 @@ class PlaylistSelect(Select):
             data_servers[interaction.guild.name]['stream_by_track_check'] = False
             data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, self.values[0]))
             data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
-            # await play_Yandex_Music_playlist(interaction=interaction, user_discord=str(interaction.user), url_or_trackname_or_filepath=self.values[0])
-            # return data_servers[interaction.guild.name]['playlist'][0]
 class onyourwave_setting_button(Button):
     def __init__(self, interaction: discord.Interaction):
         super().__init__(style=ButtonStyle.primary,
@@ -879,8 +836,7 @@ class onyourwave_setting_button(Button):
 
             await interaction.response.send_message(view=view, ephemeral=True)
         else:
-            await interaction.response.send_message('Настраивать волну может только тот, кто её запустил',
-                                                    ephemeral=True)
+            await interaction.response.send_message('Настраивать волну может только тот, кто её запустил', ephemeral=True)
 class onyourwave_setting_diversity(Select):
     def __init__(self):
         super().__init__(placeholder=f'По характеру...', min_values=1, max_values=1, options=[
@@ -1076,14 +1032,6 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     await interaction.response.send_message(f"Файл `{url_or_trackname_or_filepath}` не найден.", ephemeral=True)
                     return
 
-                # if not await check_audio_file(audio_file_path):
-                #     # Изменяем параметры трека
-                #     audio = AudioSegment.from_file(audio_file_path)
-                #     audio = audio.set_frame_rate(96000).set_channels(2)
-                #     new_path = f'{output_path}\\audio_fixed.mp3'
-                #     audio.export(new_path, format="mp3")
-                #     audio_file_path = new_path
-
             elif ".mp3" in url_or_trackname_or_filepath or ".flac" in url_or_trackname_or_filepath:
                 play_now = url_or_trackname_or_filepath
                 audio_file_path = f'{output_path}\\{url_or_trackname_or_filepath}'
@@ -1092,14 +1040,6 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                 if not os.path.isfile(audio_file_path):
                     await interaction.response.send_message(f"Файл \"{url_or_trackname_or_filepath}\" не найден.", ephemeral=True)
                     return
-
-                # if not await check_audio_file(audio_file_path):
-                #     # Изменяем параметры трека
-                #     audio = AudioSegment.from_file(audio_file_path)
-                #     audio = audio.set_frame_rate(96000).set_channels(2)
-                #     new_path = f'{output_path}\\audio_fixed.mp3'
-                #     audio.export(new_path, format="mp3")
-                #     audio_file_path = new_path
 
             else:
                 if "|" not in url_or_trackname_or_filepath:
@@ -1233,7 +1173,7 @@ async def authorize(interaction: discord.Interaction, token: str):
 @app_commands.default_permissions()
 async def log(interaction: discord.Interaction, server_name: str):
     global data_servers
-    # if str(interaction.user) == 'ti_jack#2994':
+
     if server_name in data_servers:
         message = ''
         for item in data_servers[server_name]:
@@ -1250,8 +1190,6 @@ async def log(interaction: discord.Interaction, server_name: str):
 
     else:
         await interaction.response.send_message("Такого сервера в логах нет", ephemeral=True)
-    # else:
-    #     await interaction.response.send_message("Это служебная команда!", ephemeral=True)
 
 @log.autocomplete('server_name')
 async def autocomplete_log(interaction: discord.Interaction, search: str):
