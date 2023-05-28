@@ -1,5 +1,4 @@
 from yandex_music import Client, Track
-from yandex_music.exceptions import NotFoundError
 
 import discord
 from discord import Embed, SelectOption, ButtonStyle, app_commands
@@ -13,7 +12,7 @@ import requests
 import textwrap
 import re
 from pytube import YouTube
-from pydub import AudioSegment
+# from pydub import AudioSegment
 from googleapiclient.discovery import build
 from random import random
 
@@ -56,7 +55,6 @@ data_server = {'playlist': [],
                'command_now': 0
                }
 data_servers = {}
-data_servers_log = {}
 
 
 # Загрузка токенов пользователей
@@ -99,27 +97,16 @@ async def check_voice_clients(interaction: discord.Interaction):
     global data_servers, data_servers_log
 
     voice_client = interaction.guild.voice_client
+
     while True:
-        # now = datetime.datetime.now()
-        # for name_server in data_servers:
-        #     data_servers_log[name_server][str(now).split('.')[0]] = data_servers[name_server]
         # Проверка наличия пользователей в голосовом канале
         if voice_client and not any(member != client.user for member in voice_client.channel.members):
             if voice_client.is_playing():
                 voice_client.stop()
             await voice_client.disconnect()
             data_servers[interaction.guild.name]['task'].cancel()
+            data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
             await remove_last_playing_message(interaction)
-
-            now = datetime.datetime.now()
-            current_time = now.time()
-            filename = "C:\\Users\\tima\\Documents\\Log YM\\" + f"log-{now:%Y-%m-%d}.txt"
-            # with open(filename, "a") as f:
-            #     f.seek(0, 2)  # перемещаем курсор в конец файла
-            #     f.write(f"Время: {current_time}\n"
-            #             f"Сервер: {interaction.guild.name}\n"
-            #             f"Бот отключился от канала: {voice_client.channel}\n"
-            #             "Бот отключился по причине отсутствия пользователей\n")
             return
         await asyncio.sleep(1)
 async def check_inactivity(interaction: discord.Interaction):
@@ -127,31 +114,40 @@ async def check_inactivity(interaction: discord.Interaction):
 
     voice_client = interaction.guild.voice_client
     while True:
-        # проверяем, прошло ли более 20 минут с момента последней активности бота
-        if datetime.datetime.now() - data_servers[interaction.guild.name]['last_activity_time'] > datetime.timedelta(minutes=5) and not voice_client.is_playing() and voice_client:
+        # проверяем, прошло ли более 5 минут с момента последней активности бота
+        if datetime.datetime.now() - data_servers[interaction.guild.name]['last_activity_time'] > datetime.timedelta(
+                minutes=5) and not voice_client.is_playing() and voice_client:
             await voice_client.disconnect()
             await remove_last_playing_message(interaction)
             data_servers[interaction.guild.name]['task'].cancel()
             data_servers[interaction.guild.name]['task_check_voice_clients'].cancel()
-            now = datetime.datetime.now()
-            current_time = now.time()
-            filename = "C:\\Users\\tima\\Documents\\Log YM\\" + f"log-{now:%Y-%m-%d}.txt"
-            # with open(filename, "a") as f:
-            #     f.seek(0, 2)  # перемещаем курсор в конец файла
-            #     f.write(f"Время: {current_time}\n"
-            #             f"Сервер: {ctx.guild.name}\n"
-            #             f"Бот отключился от канала: {voice_client.channel}\n"
-            #             "Бот отключился по причине бездействия\n")
             return
-        # ждем 1 минуту и повторяем проверку
         await asyncio.sleep(1)
+async def disconnect(interaction: discord.Interaction):
+    global data_servers
+    voice_client = interaction.guild.voice_client
+    try:
+        if voice_client.is_connected():
+            if voice_client.is_playing():
+                voice_client.stop()
+            await voice_client.disconnect()
+
+            data_servers[interaction.guild.name]['playlist'] = []
+            data_servers[interaction.guild.name]['index_play_now'] = 0
+
+            data_servers[interaction.guild.name]['task'].cancel()
+            data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
+            data_servers[interaction.guild.name]['task_check_voice_clients'].cancel()
+            await remove_last_playing_message(interaction)
+    except Exception:
+        pass
 async def check_audio_file(path):
-        audio = AudioSegment.from_file(path)
-        bitrate = audio.frame_rate * audio.channels * audio.sample_width * 8
-        # print("bitrate = ", bitrate, "\nframe_rate = ", audio.frame_rate, "\nChannels = ", audio.channels, "\nsample_width = ", audio.sample_width)
-        if (500 < bitrate < 512000):
-            return True
-        return False
+    audio = AudioSegment.from_file(path)
+    bitrate = audio.frame_rate * audio.channels * audio.sample_width * 8
+    # print("bitrate = ", bitrate, "\nframe_rate = ", audio.frame_rate, "\nChannels = ", audio.channels, "\nsample_width = ", audio.sample_width)
+    if (500 < bitrate < 512000):
+        return True
+    return False
 async def add_queue(ctx, url_or_trackname_or_filepath):
     global index_queue
 
@@ -160,203 +156,67 @@ async def add_queue(ctx, url_or_trackname_or_filepath):
 
     client_ym = Client(tokens[user_discord]).init()
 
-    if playlist_id.isdigit():
-        try:
-            playlist_new = client_ym.users_playlists(playlist_id)
-        except Exception:
-            await ctx.send(content=f"Не удалось найти плейлист с ID {playlist_id}")
-            return
+    try:
+        playlist_new = client_ym.users_playlists(playlist_id)
+    except Exception:
+        await ctx.send(content=f"Не удалось найти плейлист с ID {playlist_id}")
+        return
 
-        if len(playlist_ym) == 1:
-            for i in range(len(playlist_new.tracks)):
-                playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{i + 1}")
+    if len(playlist_ym) == 1:
+        for i in range(len(playlist_new.tracks)):
+            playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{i + 1}")
+    else:
+        if "-" in playlist_ym[1]:
+            playlist_b_e = playlist_ym[1].split('-')
+
+            if playlist_b_e[1] == '':
+                index_begin = int(playlist_b_e[0])
+                index_track = index_begin
+
+                if index_track > len(playlist_new.tracks):
+                    await ctx.send(
+                        f"\"{index_track}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
+                    return
+                elif index_track <= 0:
+                    await ctx.send(f"\"{index_track}\" - номер трека должен быть больше 0 🙃")
+                    return
+
+                for i in range(index_begin - 1, len(playlist_new.tracks)):
+                    playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{i + 1}")
+            elif playlist_b_e[0] == '':
+                index_end = int(playlist_b_e[1])
+
+                if index_end > len(playlist_new.tracks):
+                    await ctx.send(
+                        f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
+                    return
+                elif index_end <= 0:
+                    await ctx.send(f"\"{index_end}\" - номер трека должен быть больше 0 🙃")
+                    return
+
+                for i in range(index_end):
+                    playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{i + 1}")
+            else:
+                index_begin = int(playlist_b_e[0])
+                index_end = int(playlist_b_e[1])
+
+                if index_end > len(playlist_new.tracks):
+                    await ctx.send(
+                        f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
+                    return
+                elif index_end <= 0:
+                    await ctx.send(f"\"{index_end}\" - номер трека должен быть больше 0 🙃")
+                    return
+                elif index_begin > index_end:
+                    await ctx.send(
+                        f"\"{index_end}\" - номер окончания плейлиста должен быть больше номера начала 🙃")
+                    return
+
+                for i in range(index_begin - 1, index_end):
+                    playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{i + 1}")
         else:
-            if "-" in playlist_ym[1]:
-                playlist_b_e = playlist_ym[1].split('-')
-
-                if playlist_b_e[1] == '':
-                    index_begin = int(playlist_b_e[0])
-                    index_track = index_begin
-
-                    if index_track > len(playlist_new.tracks):
-                        await ctx.send(
-                            f"\"{index_track}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                        return
-                    elif index_track <= 0:
-                        await ctx.send(f"\"{index_track}\" - номер трека должен быть больше 0 🙃")
-                        return
-
-                    for i in range(index_begin - 1, len(playlist_new.tracks)):
-                        playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{i + 1}")
-                    # check_next_index = index_queue + len(playlist_new.tracks) - index_begin
-                elif playlist_b_e[0] == '':
-                    index_end = int(playlist_b_e[1])
-
-                    if index_end > len(playlist_new.tracks):
-                        await ctx.send(
-                            f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                        return
-                    elif index_end <= 0:
-                        await ctx.send(f"\"{index_end}\" - номер трека должен быть больше 0 🙃")
-                        return
-
-                    for i in range(index_end):
-                        playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{i + 1}")
-                    # check_next_index = index_queue + index_end
-                else:
-                    index_begin = int(playlist_b_e[0])
-                    index_end = int(playlist_b_e[1])
-
-                    if index_end > len(playlist_new.tracks):
-                        await ctx.send(
-                            f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                        return
-                    elif index_end <= 0:
-                        await ctx.send(f"\"{index_end}\" - номер трека должен быть больше 0 🙃")
-                        return
-                    elif index_begin > index_end:
-                        await ctx.send(
-                            f"\"{index_end}\" - номер окончания плейлиста должен быть больше номера начала 🙃")
-                        return
-
-                    for i in range(index_begin - 1, index_end):
-                        playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{i + 1}")
-                    # check_next_index = index_queue + index_end - index_begin
-            else:
-                index_track = int(playlist_ym[1])
-                playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{index_track}")
-                # check_next_index = index_queue + 1
-    else:  # если введено название плейлиста
-        if "Мне нравится" in playlist_id:
-            playlist_new = client_ym.users_likes_tracks()
-            if len(playlist_ym) == 1:
-                for i in range(len(playlist_new.tracks)):
-                    playlists[ctx.guild.name].append(f"{user_discord}|Мне нравится,{i + 1}")
-
-            else:
-                if "-" in playlist_ym[1]:
-                    playlist_b_e = playlist_ym[1].split('-')
-
-                    if playlist_b_e[1] == '':
-                        index_begin = int(playlist_b_e[0])
-                        index_track = index_begin
-
-                        if index_track > len(playlist_new.tracks):
-                            await ctx.send(
-                                f"\"{index_track}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                            return
-                        elif index_track <= 0:
-                            await ctx.send(f"\"{index_track}\" - номер трека должен быть больше 0 🙃")
-                            return
-
-                        for i in range(index_begin - 1, len(playlist_new.tracks)):
-                            playlists[ctx.guild.name].append(f"{user_discord}|Мне нравится,{i + 1}")
-
-                    elif playlist_b_e[0] == '':
-                        index_end = int(playlist_b_e[1])
-
-                        if index_end > len(playlist_new.tracks):
-                            await ctx.send(
-                                f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                            return
-                        elif index_end <= 0:
-                            await ctx.send(f"\"{index_end}\" - номер трека должен быть больше 0 🙃")
-                            return
-
-                        for i in range(index_end):
-                            playlists[ctx.guild.name].append(f"{user_discord}|Мне нравится,{i + 1}")
-
-                    else:
-                        index_begin = int(playlist_b_e[0])
-                        index_end = int(playlist_b_e[1])
-
-                        if index_end > len(playlist_new.tracks):
-                            await ctx.send(
-                                f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                            return
-                        elif index_end <= 0:
-                            await ctx.send(f"\"{index_end}\" - номер трека должен быть больше 0 🙃")
-                            return
-                        elif index_begin > index_end:
-                            await ctx.send(
-                                f"\"{index_end}\" - номер окончания плейлиста должен быть больше номера начала 🙃")
-                            return
-
-                        for i in range(index_begin - 1, index_end):
-                            playlists[ctx.guild.name].append(f"{user_discord}|Мне нравится,{i + 1}")
-
-                else:
-                    index_track = int(playlist_ym[1])
-                    playlists[ctx.guild.name].append(f"{user_discord}|Мне нравится,{index_track}")
-        else:
-            playlists_name = client_ym.users_playlists_list()
-
-            for name in playlists_name:
-                if url_or_trackname_or_filepath in name.title:
-                    playlist_id = name.playlist_id.split(':')[1]
-            if not playlist_id.isdigit():
-                with open("C:\\Users\\tima\\Pictures\\Gif\\spin-1.gif", 'rb') as f:
-                    file = discord.File(f)
-                await ctx.send(content=f"\"{playlist_id}\" - не удалось найти плейлист с таким названием", file=file)
-                return
-            playlist_new = client_ym.users_playlists(int(playlist_id))
-            if len(playlist_ym) == 1:
-                for i in range(len(playlist_new.tracks)):
-                    playlists[ctx.guild.name].append(f"{user_discord}|{playlist_new.title},{i + 1}")
-            else:
-                if "-" in playlist_ym[1]:
-                    playlist_b_e = playlist_ym[1].split('-')
-
-                    if playlist_b_e[1] == '':
-                        index_begin = int(playlist_b_e[0])
-                        index_track = index_begin
-
-                        if index_track > len(playlist_new.tracks):
-                            await ctx.send(
-                                f"\"{index_track}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                            return
-                        elif index_track <= 0:
-                            await ctx.send(f"\"{index_track}\" - номер трека должен быть больше 0 🙃")
-                            return
-
-                        for i in range(index_begin - 1, len(playlist_new.tracks)):
-                            playlists[ctx.guild.name].append(f"{user_discord}|{playlist_new.title},{i + 1}")
-
-                    elif playlist_b_e[0] == '':
-                        index_end = int(playlist_b_e[1])
-
-                        if index_end > len(playlist_new.tracks):
-                            await ctx.send(
-                                f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                            return
-                        elif index_end <= 0:
-                            await ctx.send(f"\"{index_end}\" - номер трека должен быть больше 0 🙃")
-                            return
-
-                        for i in range(index_end):
-                            playlists[ctx.guild.name].append(f"{user_discord}|{playlist_new.title},{i + 1}")
-                    else:
-                        index_begin = int(playlist_b_e[0])
-                        index_end = int(playlist_b_e[1])
-
-                        if index_end > len(playlist_new.tracks):
-                            await ctx.send(
-                                f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"")
-                            return
-                        elif index_end <= 0:
-                            await ctx.send(f"\"{index_end}\" - номер трека должен быть больше 0 🙃")
-                            return
-                        elif index_begin > index_end:
-                            await ctx.send(
-                                f"\"{index_end}\" - номер окончания плейлиста должен быть больше номера начала 🙃")
-                            return
-
-                        for i in range(index_begin - 1, index_end):
-                            playlists[ctx.guild.name].append(f"{user_discord}|{playlist_new.title},{i + 1}")
-
-                else:
-                    index_track = int(playlist_ym[1])
-                    playlists[ctx.guild.name].append(f"{user_discord}|{playlist_new.title},{i + 1}")
+            index_track = int(playlist_ym[1])
+            playlists[ctx.guild.name].append(f"{user_discord}|{playlist_id},{index_track}")
 async def play_YouTube(url_or_trackname_or_filepath, user_discord, interaction: discord.Interaction):
     global data_servers
 
@@ -484,13 +344,15 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
 
                 if index_track > len(playlist_new.tracks):
                     await interaction.response.send_message(
-                        f"\"{index_track}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"", ephemeral=True)
+                        f"\"{index_track}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"",
+                        ephemeral=True)
                     return False
                 elif index_track <= 0:
-                    await interaction.response.send_message(f"\"{index_track}\" - номер трека должен быть больше 0 🙃", ephemeral=True)
+                    await interaction.response.send_message(f"\"{index_track}\" - номер трека должен быть больше 0 🙃",
+                                                            ephemeral=True)
                     return False
 
-                for i in range(index_begin-1, len(playlist_new.tracks)):
+                for i in range(index_begin - 1, len(playlist_new.tracks)):
                     data_servers[interaction.guild.name]['playlist'].append(f"{user_discord}|{playlist_id},{i + 1}")
 
                 track_short = playlist_new.tracks[index_track - 1]
@@ -499,10 +361,12 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
 
                 if index_end > len(playlist_new.tracks):
                     await interaction.response.send_message(
-                        f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"", ephemeral=True)
+                        f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"",
+                        ephemeral=True)
                     return False
                 elif index_end <= 0:
-                    await interaction.response.send_message(f"\"{index_end}\" - номер трека должен быть больше 0 🙃", ephemeral=True)
+                    await interaction.response.send_message(f"\"{index_end}\" - номер трека должен быть больше 0 🙃",
+                                                            ephemeral=True)
                     return False
 
                 for i in range(index_end):
@@ -516,17 +380,20 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
 
                 if index_end > len(playlist_new.tracks):
                     await interaction.response.send_message(
-                        f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"", ephemeral=True)
+                        f"\"{index_end}\" - номер трека превышает количество треков в плейлисте \"{len(playlist_new.tracks)}\"",
+                        ephemeral=True)
                     return False
                 elif index_end <= 0:
-                    await interaction.response.send_message(f"\"{index_end}\" - номер трека должен быть больше 0 🙃", ephemeral=True)
+                    await interaction.response.send_message(f"\"{index_end}\" - номер трека должен быть больше 0 🙃",
+                                                            ephemeral=True)
                     return False
                 elif index_begin > index_end:
                     await interaction.response.send_message(
-                        f"\"{index_end}\" - номер окончания плейлиста должен быть больше номера начала 🙃", ephemeral=True)
+                        f"\"{index_end}\" - номер окончания плейлиста должен быть больше номера начала 🙃",
+                        ephemeral=True)
                     return False
 
-                for i in range(index_begin-1, index_end):
+                for i in range(index_begin - 1, index_end):
                     data_servers[interaction.guild.name]['playlist'].append(f"{user_discord}|{playlist_id},{i + 1}")
 
                 index_track = index_begin
@@ -540,8 +407,10 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
     track = client_ym.tracks(track_short.track_id)[0]
 
     if not track.available:
-        await interaction.response.send_message(f"{index_track} - {track.title} - трек отозван правообладателем", ephemeral=True)
-        if data_servers[interaction.guild.name]['index_play_now'] + 1 < len(data_servers[interaction.guild.name]['playlist']):
+        await interaction.response.send_message(f"{index_track} - {track.title} - трек отозван правообладателем",
+                                                ephemeral=True)
+        if data_servers[interaction.guild.name]['index_play_now'] + 1 < len(
+                data_servers[interaction.guild.name]['playlist']):
             voice_client.stop()
             data_servers[interaction.guild.name]['index_play_now'] += 1
             try:
@@ -549,7 +418,8 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
             except Exception as e:
                 await interaction.response.send_message(f"Произошла ошибка: {e}", ephemeral=True)
                 return False
-            data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]))
+            data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[
+                interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]))
             data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
             return False
         else:
@@ -663,7 +533,7 @@ async def send_search_request(interaction: discord.Interaction, query, user_disc
         data_servers[interaction.guild.name]['track_id_play_now'] = None
         await interaction.response.send_message("Не удалось найти трек с таким названием", ephemeral=True)
         return False
-async def play_radio(interaction: discord.Interaction, user_discord=None, first: bool=False, station_id: str=None, station_from: str=None):
+async def play_radio(interaction: discord.Interaction, user_discord=None, first: bool = False, station_id: str = None, station_from: str = None, new: bool=False):
     global data_servers
     if first:
         client_ym = Client(tokens[str(user_discord)]).init()
@@ -684,8 +554,11 @@ async def play_radio(interaction: discord.Interaction, user_discord=None, first:
         data_servers[interaction.guild.name]['track_url'] = base_url + str(track.track_id).split(":")[0]
     else:
         data_servers[interaction.guild.name]['track_url'] = base_url + str(track.track_id)
-    data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['track_url']))
-    data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
+
+    if new:
+        data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['track_url']))
+    else:
+        return data_servers[interaction.guild.name]['track_url']
 
 
 '''
@@ -785,7 +658,7 @@ class Radio:
     def __generate_play_id():
         return "%s-%s-%s" % (int(random() * 1000), int(random() * 1000), int(random() * 1000))
 
- 
+
 '''
 Классы реализации кнопок
 '''
@@ -808,7 +681,8 @@ class next_button(Button):
                          label="К следующему",
                          emoji="⏭️",
                          row=1,
-                         disabled=data_servers[interaction.guild.name]['index_play_now']+1>=len(data_servers[interaction.guild.name]['playlist']) and not
+                         disabled=data_servers[interaction.guild.name]['index_play_now'] + 1 >= len(
+                             data_servers[interaction.guild.name]['playlist']) and not
                                   data_servers[interaction.guild.name]['radio_check'] and not
                                   data_servers[interaction.guild.name]['stream_by_track_check'])
 
@@ -816,24 +690,27 @@ class next_button(Button):
         global data_servers
         voice_client = interaction.guild.voice_client
         voice_client.stop()
-        if data_servers[interaction.guild.name]['radio_check'] or data_servers[interaction.guild.name]['stream_by_track_check']:
-            data_servers[interaction.guild.name]['task'].cancel()
-            await play_radio(interaction=interaction)
-        else:
-            data_servers[interaction.guild.name]['index_play_now'] += 1
-            try:
-                data_servers[interaction.guild.name]['task'].cancel()
-            except Exception as e:
-                await interaction.response.send_message(f"Произошла ошибка: {e}", ephemeral=True)
-            data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]))
-            data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
+        data_servers[interaction.guild.name]['repeat_flag'] = False
+        # if data_servers[interaction.guild.name]['radio_check'] or data_servers[interaction.guild.name][
+        #     'stream_by_track_check']:
+        #     data_servers[interaction.guild.name]['task'].cancel()
+        #     await play_radio(interaction=interaction)
+        # else:
+        #     data_servers[interaction.guild.name]['index_play_now'] += 1
+        #     try:
+        #         data_servers[interaction.guild.name]['task'].cancel()
+        #     except Exception as e:
+        #         await interaction.response.send_message(f"Произошла ошибка: {e}", ephemeral=True)
+        #     data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[
+        #         interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]))
+        #     data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
 class prev_button(Button):
     def __init__(self, interaction: discord.Interaction):
         super().__init__(style=ButtonStyle.primary,
                          label="К предыдущему",
                          emoji="⏮️",
                          row=1,
-                         disabled=data_servers[interaction.guild.name]['index_play_now']-1<0 or
+                         disabled=data_servers[interaction.guild.name]['index_play_now'] - 1 < 0 or
                                   data_servers[interaction.guild.name]['radio_check'] or
                                   data_servers[interaction.guild.name]['stream_by_track_check'])
 
@@ -841,19 +718,24 @@ class prev_button(Button):
         global data_servers
         voice_client = interaction.guild.voice_client
         voice_client.stop()
-        data_servers[interaction.guild.name]['index_play_now'] -= 1
-        try:
-            data_servers[interaction.guild.name]['task'].cancel()
-        except Exception as e:
-            await interaction.response.send_message(f"Произошла ошибка: {e}", ephemeral=True)
-        data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]))
-        data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
+        data_servers[interaction.guild.name]['index_play_now'] -= 2
+        data_servers[interaction.guild.name]['repeat_flag'] = False
+        # try:
+        #     data_servers[interaction.guild.name]['task'].cancel()
+        # except Exception as e:
+        #     await interaction.response.send_message(f"Произошла ошибка: {e}", ephemeral=True)
+        # data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction,
+        #                                                                         data_servers[interaction.guild.name][
+        #                                                                             'playlist'][data_servers[
+        #                                                                             interaction.guild.name][
+        #                                                                             'index_play_now']]))
+        # data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
 class pause_resume_button(Button):
     def __init__(self):
         super().__init__(style=ButtonStyle.primary, label="Пауза/Продолжить", emoji="⏯️", row=1)
 
     async def callback(self, interaction):
-        voice_client = interaction.guild.voice_client # use the attribute
+        voice_client = interaction.guild.voice_client  # use the attribute
         if self.style == ButtonStyle.green:
             self.style = ButtonStyle.primary  # изменяем стиль кнопки на primary
             voice_client.resume()
@@ -890,7 +772,8 @@ class lyrics_button(Button):
             self.style = ButtonStyle.green  # изменяем стиль кнопки на зеленый
             if len(data_servers[interaction.guild.name]['lyrics']) > 2000:
                 # Split the lyrics into two parts using textwrap
-                parts = textwrap.wrap(data_servers[interaction.guild.name]['lyrics'], width=1800, break_long_words=False, replace_whitespace=False)
+                parts = textwrap.wrap(data_servers[interaction.guild.name]['lyrics'], width=1800,
+                                      break_long_words=False, replace_whitespace=False)
                 await interaction.channel.send(f"Текст трека (часть 1):\n{parts[0]}")
                 await interaction.channel.send(f"Текст трека (часть 2):\n{parts[1]}")
             else:
@@ -936,8 +819,9 @@ class stream_by_track_button(Button):
         await play_radio(interaction=interaction,
                          user_discord=interaction.user,
                          first=True,
-                         station_id='track:'+data_servers[interaction.guild.name]['track_id_play_now'],
-                         station_from='track')
+                         station_id='track:' + data_servers[interaction.guild.name]['track_id_play_now'],
+                         station_from='track',
+                         new=True)
 class PlaylistSelect(Select):
     def __init__(self, interaction: discord.Interaction):
         options = []
@@ -945,34 +829,39 @@ class PlaylistSelect(Select):
         client_ym = Client(tokens[user_discord]).init()
 
         options.append(SelectOption(label="Моя волна", value="1", description="Радио"))
-        options.append(SelectOption(label="Мне нравится", value="3", description=f"Количество треков: {len(client_ym.users_likes_tracks())}"))
+        options.append(SelectOption(label="Мне нравится", value="3",
+                                    description=f"Количество треков: {len(client_ym.users_likes_tracks())}"))
 
         # Формируем сообщение со списком плейлистов и их ID
         playlists_ym = client_ym.users_playlists_list()
         for playlist_ym in playlists_ym:
             playlist_ym_id = playlist_ym.playlist_id.split(':')[1]
-            options.append(SelectOption(label=str(playlist_ym.title), value=str(playlist_ym_id), description=f"Количество треков: {len(client_ym.users_playlists(int(playlist_ym_id)).tracks)}"))
+            options.append(SelectOption(label=str(playlist_ym.title), value=str(playlist_ym_id),
+                                        description=f"Количество треков: {len(client_ym.users_playlists(int(playlist_ym_id)).tracks)}"))
 
         super().__init__(placeholder='Выберете плейлист...', min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         global data_servers
+
         voice_client = interaction.guild.voice_client
+
         data_servers[interaction.guild.name]['playlist'] = []
         data_servers[interaction.guild.name]['index_play_now'] = 0
-        if voice_client.is_playing() or voice_client.is_paused():
-            voice_client.stop()
-            data_servers[interaction.guild.name]['task_reserv'].cancel()
-            data_servers[interaction.guild.name]['task'].cancel()
+
         if self.values[0] == "1":
             data_servers[interaction.guild.name]['radio_check'] = True
             data_servers[interaction.guild.name]['stream_by_track_check'] = False
-            await play_radio(interaction=interaction, user_discord=interaction.user, first=True)
+            now = await play_radio(interaction=interaction, user_discord=interaction.user, first=True)
+            data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, now))
+            data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
         else:
             data_servers[interaction.guild.name]['radio_check'] = False
             data_servers[interaction.guild.name]['stream_by_track_check'] = False
             data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, self.values[0]))
             data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
+            # await play_Yandex_Music_playlist(interaction=interaction, user_discord=str(interaction.user), url_or_trackname_or_filepath=self.values[0])
+            # return data_servers[interaction.guild.name]['playlist'][0]
 class onyourwave_setting_button(Button):
     def __init__(self, interaction: discord.Interaction):
         super().__init__(style=ButtonStyle.primary,
@@ -990,7 +879,8 @@ class onyourwave_setting_button(Button):
 
             await interaction.response.send_message(view=view, ephemeral=True)
         else:
-            await interaction.response.send_message('Настраивать волну может только тот, кто её запустил', ephemeral=True)
+            await interaction.response.send_message('Настраивать волну может только тот, кто её запустил',
+                                                    ephemeral=True)
 class onyourwave_setting_diversity(Select):
     def __init__(self):
         super().__init__(placeholder=f'По характеру...', min_values=1, max_values=1, options=[
@@ -1016,9 +906,8 @@ class onyourwave_setting_diversity(Select):
         voice_client = interaction.guild.voice_client
         if voice_client.is_playing() or voice_client.is_paused():
             voice_client.stop()
-            data_servers[interaction.guild.name]['task_reserv'].cancel()
             data_servers[interaction.guild.name]['task'].cancel()
-        await play_radio(interaction=interaction, user_discord=interaction.user, first=True)
+        await play_radio(interaction=interaction, user_discord=interaction.user, first=True, new=True)
 class onyourwave_setting_mood_energy(Select):
     def __init__(self):
         super().__init__(placeholder=f'Под настроение...', min_values=1, max_values=1, options=[
@@ -1047,7 +936,7 @@ class onyourwave_setting_mood_energy(Select):
             voice_client.stop()
             data_servers[interaction.guild.name]['task_reserv'].cancel()
             data_servers[interaction.guild.name]['task'].cancel()
-        await play_radio(interaction=interaction, user_discord=interaction.user, first=True)
+        await play_radio(interaction=interaction, user_discord=interaction.user, first=True, new=True)
 class onyourwave_setting_language(Select):
     def __init__(self):
         super().__init__(placeholder=f'По языку...', min_values=1, max_values=1, options=[
@@ -1075,7 +964,7 @@ class onyourwave_setting_language(Select):
             voice_client.stop()
             data_servers[interaction.guild.name]['task_reserv'].cancel()
             data_servers[interaction.guild.name]['task'].cancel()
-        await play_radio(interaction=interaction, user_discord=interaction.user, first=True)
+        await play_radio(interaction=interaction, user_discord=interaction.user, first=True, new=True)
 
 
 '''
@@ -1083,63 +972,56 @@ class onyourwave_setting_language(Select):
 '''
 @tree.command(name='play', description="🎧Воспроизвести трек. При вызове без аргумента - воспроизвести плейлист из списка")
 @app_commands.describe(url_or_trackname='Вы можете указать: ссылку на трек из Яндекс.Музыки или YouTube, название трека')
-async def start_play(interaction: discord.Interaction, url_or_trackname: str=None):
+async def start_play(interaction: discord.Interaction, url_or_trackname: str = None):
     global data_servers, settings_onyourwave
-
+    # await interaction.response.defer()
     if interaction.guild.name not in data_servers:
         data_servers[interaction.guild.name] = data_server
 
     if str(interaction.user) not in settings_onyourwave:
-        settings_onyourwave[str(interaction.user)] = {'mood_energy': 'all', 'diversity': 'default', 'language': 'any'}
+        settings_onyourwave[str(interaction.user)] = {'mood_energy': 'all',
+                                                      'diversity': 'default',
+                                                      'language': 'any'}
 
-    data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, url_or_trackname))
-    data_servers[interaction.guild.name]['task_check_inactivity'] = asyncio.create_task(check_inactivity(interaction))
-    data_servers[interaction.guild.name]['task_check_voice_clients'] = asyncio.create_task(check_voice_clients(interaction))
-async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: str=None, flag_repeat: bool=True):
+    author_voice_state = interaction.user.voice
+    if author_voice_state is None:
+        await interaction.response.send_message("Подключитесь к голосовому каналу.", ephemeral=True)
+        while not author_voice_state:
+            await asyncio.sleep(0.1)
+            author_voice_state = interaction.user.voice
+
+    # Проверяем, подключен ли бот к голосовому каналу
+    voice_client = interaction.guild.voice_client
+
+    if not voice_client:
+        data_servers[interaction.guild.name]['task_check_inactivity'] = asyncio.create_task(
+            check_inactivity(interaction))
+        data_servers[interaction.guild.name]['task_check_voice_clients'] = asyncio.create_task(
+            check_voice_clients(interaction))
+        voice_channel = interaction.user.voice.channel
+        await voice_channel.connect()
+        voice_client = interaction.guild.voice_client
+    if voice_client.is_playing() or voice_client.is_paused():
+        voice_client.stop()
+        data_servers[interaction.guild.name]['task_reserv'].cancel()
+        await remove_last_playing_message(interaction)
+    data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, url_or_trackname_or_filepath=url_or_trackname))
+async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: str = None):
     try:
         global output_path, tokens, data_servers
 
-        last_activity_time = datetime.datetime.now()
-
-        author_voice_state = interaction.user.voice
-        if author_voice_state is None:
-            await interaction.response.send_message("Вы не подключены к голосовому каналу.", ephemeral=True)
-            return
-
-        now = datetime.datetime.now()
-        filename = "C:\\Users\\tima\\Documents\\Log YM\\" + f"log-{now:%Y-%m-%d}.txt"
-
-        # Проверяем, подключен ли бот к голосовому каналу
         voice_client = interaction.guild.voice_client
 
-        if not voice_client:
-            voice_channel = interaction.user.voice.channel
-            await voice_channel.connect()
-            voice_client = interaction.guild.voice_client
-
-            now = datetime.datetime.now()
-            current_time = now.time()
-
-            # with open(filename, "a") as f:
-            #     f.seek(0, 2)  # перемещаем курсор в конец файла
-            #     f.write(f"Время: {current_time}\n"
-            #             f"Сервер: {ctx.guild.name}\n"
-            #             f"Бота вызвал: {ctx.author}\n"
-            #             f"Бот подключился к каналу: {voice_client.channel}\n\n")
+        data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
 
         if not url_or_trackname_or_filepath:  # если не передан url
-            # await remove_last_playing_message(ctx)
             view = View()
             view.add_item(PlaylistSelect(interaction))
+
             await interaction.response.send_message(view=view, ephemeral=True)
             return
-        else:
 
-            # if len(data_servers[interaction.guild.name]['playlist']) == 0 and not data_servers[interaction.guild.name]['radio_check']
-            #
-            # while data_servers[interaction.guild.name]['index_play_now'] < len(data_servers[interaction.guild.name]['playlist']):
-            #
-            #     url_or_trackname_or_filepath = data_servers[interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]
+        while True:
 
             if "youtube.com" in url_or_trackname_or_filepath:
                 if "|" not in url_or_trackname_or_filepath:
@@ -1148,19 +1030,13 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     p = url_or_trackname_or_filepath.split('|')
                     name_and_discriminator = p[0]  # получаем имя и дискриминатор в формате "Имя#Дискриминатор"
 
-                    user_discord = discord.utils.get(interaction.guild.members, name=name_and_discriminator.split("#")[0], discriminator=name_and_discriminator.split("#")[1])  # ищем участника с заданным именем и дискриминатором
+                    user_discord = discord.utils.get(interaction.guild.members,
+                                                     name=name_and_discriminator.split("#")[0],
+                                                     discriminator=name_and_discriminator.split("#")[
+                                                         1])  # ищем участника с заданным именем и дискриминатором
                     url_or_trackname_or_filepath = p[1]
 
-                # Проверяем, играет ли бот уже какую-то музыку
-                if voice_client.is_playing() or voice_client.is_paused():
-                    # playlists[ctx.guild.name].append(f"{user_discord}-{url_or_trackname_or_filepath}")
-                    # await ctx.send(f"Трек {url_or_trackname_or_filepath} добавлен в очередь")
-                    # return
-                    voice_client.stop()
-                    data_servers[interaction.guild.name]['task_reserv'].cancel()
-
                 p = await play_YouTube(url_or_trackname_or_filepath, user_discord, interaction)
-
                 play_now = p[0]
                 audio_file_path = p[1]
 
@@ -1175,12 +1051,16 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     p = url_or_trackname_or_filepath.split('|')
                     name_and_discriminator = p[0]  # получаем имя и дискриминатор в формате "Имя#Дискриминатор"
 
-                    user_discord = discord.utils.get(interaction.guild.members, name=name_and_discriminator.split("#")[0], discriminator=name_and_discriminator.split("#")[1])  # ищем участника с заданным именем и дискриминатором
+                    user_discord = discord.utils.get(interaction.guild.members,
+                                                     name=name_and_discriminator.split("#")[0],
+                                                     discriminator=name_and_discriminator.split("#")[
+                                                         1])  # ищем участника с заданным именем и дискриминатором
                     url_or_trackname_or_filepath = p[1]
 
                 if not str(user_discord) in tokens:
                     await interaction.response.send_message(
-                        f"Пользователь {str(user_discord)} не вошёл в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой !authorize", ephemeral=True)
+                        f"Пользователь {str(user_discord)} не вошёл в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize",
+                        ephemeral=True)
                     return
 
                 p = await play_Yandex_Music_url(interaction, url_or_trackname_or_filepath, str(user_discord))
@@ -1193,13 +1073,7 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
 
                 # Проверяем, что файл существует
                 if not os.path.isfile(audio_file_path):
-                    await ctx.send(f"Файл `{url_or_trackname_or_filepath}` не найден.")
-                    return
-
-                # Проверяем, играет ли бот уже какую-то музыку
-                if voice_client.is_playing():
-                    playlists[ctx.guild.name].append(url_or_trackname_or_filepath)
-                    await ctx.send(f"Трек \"{url_or_trackname_or_filepath}\" добавлен в очередь")
+                    await interaction.response.send_message(f"Файл `{url_or_trackname_or_filepath}` не найден.", ephemeral=True)
                     return
 
                 # if not await check_audio_file(audio_file_path):
@@ -1211,49 +1085,21 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                 #     audio_file_path = new_path
 
             elif ".mp3" in url_or_trackname_or_filepath or ".flac" in url_or_trackname_or_filepath:
-                if "@" in url_or_trackname_or_filepath:
-                    play_now = url_or_trackname_or_filepath[1:]
-                    audio_file_path = f'{output_path}\\{url_or_trackname_or_filepath[1:]}'
+                play_now = url_or_trackname_or_filepath
+                audio_file_path = f'{output_path}\\{url_or_trackname_or_filepath}'
 
-                    # Проверяем, что файл существует
-                    if not os.path.isfile(audio_file_path):
-                        await ctx.send(f"Файл \"{url_or_trackname_or_filepath[1:]}\" не найден.")
-                        return
+                # Проверяем, что файл существует
+                if not os.path.isfile(audio_file_path):
+                    await interaction.response.send_message(f"Файл \"{url_or_trackname_or_filepath}\" не найден.", ephemeral=True)
+                    return
 
-                    if not await check_audio_file(audio_file_path):
-                        # Изменяем параметры трека
-                        audio = AudioSegment.from_file(audio_file_path)
-                        audio = audio.set_frame_rate(96000).set_channels(2)
-                        new_path = f'{output_path}\\audio_fixed.mp3'
-                        audio.export(new_path, format="mp3")
-                        audio_file_path = new_path
-
-                    index_play_now -= 1
-
-                    if voice_client.is_playing():
-                        voice_client.stop()
-                else:
-                    play_now = url_or_trackname_or_filepath
-                    audio_file_path = f'{output_path}\\{url_or_trackname_or_filepath}'
-
-                    # Проверяем, что файл существует
-                    if not os.path.isfile(audio_file_path):
-                        await ctx.send(f"Файл \"{url_or_trackname_or_filepath}\" не найден.")
-                        return
-
-                    # Проверяем, играет ли бот уже какую-то музыку
-                    if voice_client.is_playing():
-                        playlists[ctx.guild.name].append(url_or_trackname_or_filepath)
-                        await ctx.send(f"Трек \"{url_or_trackname_or_filepath}\" добавлен в очередь")
-                        return
-
-                    if not await check_audio_file(audio_file_path):
-                        # Изменяем параметры трека
-                        audio = AudioSegment.from_file(audio_file_path)
-                        audio = audio.set_frame_rate(96000).set_channels(2)
-                        new_path = f'{output_path}\\audio_fixed.mp3'
-                        audio.export(new_path, format="mp3")
-                        audio_file_path = new_path
+                # if not await check_audio_file(audio_file_path):
+                #     # Изменяем параметры трека
+                #     audio = AudioSegment.from_file(audio_file_path)
+                #     audio = audio.set_frame_rate(96000).set_channels(2)
+                #     new_path = f'{output_path}\\audio_fixed.mp3'
+                #     audio.export(new_path, format="mp3")
+                #     audio_file_path = new_path
 
             else:
                 if "|" not in url_or_trackname_or_filepath:
@@ -1262,12 +1108,16 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     p = url_or_trackname_or_filepath.split('|')
                     name_and_discriminator = p[0]  # получаем имя и дискриминатор в формате "Имя#Дискриминатор"
 
-                    user_discord = discord.utils.get(interaction.guild.members, name=name_and_discriminator.split("#")[0], discriminator=name_and_discriminator.split("#")[1])  # ищем участника с заданным именем и дискриминатором
+                    user_discord = discord.utils.get(interaction.guild.members,
+                                                     name=name_and_discriminator.split("#")[0],
+                                                     discriminator=name_and_discriminator.split("#")[
+                                                         1])  # ищем участника с заданным именем и дискриминатором
                     url_or_trackname_or_filepath = p[1]
 
                 if not str(user_discord) in tokens:
                     await interaction.response.send_message(
-                        f"Пользователь {str(user_discord)} не вошёл в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой !authorize", ephemeral=True)
+                        f"Пользователь {str(user_discord)} не вошёл в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize",
+                        ephemeral=True)
                     return
 
                 p = await play_Yandex_Music_playlist(interaction, url_or_trackname_or_filepath, str(user_discord))
@@ -1284,79 +1134,77 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
             # Проигрываем аудио
             voice_client.play(audio_source)
 
-        if flag_repeat:
-            data_servers[interaction.guild.name]['repeat_flag'] = False
+            if not data_servers[interaction.guild.name]['repeat_flag']:
+                data_servers[interaction.guild.name]['repeat_flag'] = False
 
-            await remove_last_playing_message(interaction)
+                await remove_last_playing_message(interaction)
 
-            view = View(timeout=1200.0)
+                view = View(timeout=1200.0)
 
-            view.add_item(prev_button(interaction))
-            view.add_item(pause_resume_button())
-            view.add_item(next_button(interaction))
-            view.add_item(repeat_button())
-            view.add_item(lyrics_button(interaction))
-            view.add_item(track_url_button(interaction))
-            view.add_item(disconnect_button())
-            view.add_item(stream_by_track_button(interaction))
-            if data_servers[interaction.guild.name]['radio_check']:
-                view.add_item(onyourwave_setting_button(interaction))
+                view.add_item(prev_button(interaction))
+                view.add_item(pause_resume_button())
+                view.add_item(next_button(interaction))
+                view.add_item(repeat_button())
+                view.add_item(lyrics_button(interaction))
+                view.add_item(track_url_button(interaction))
+                view.add_item(disconnect_button())
+                view.add_item(stream_by_track_button(interaction))
+                if data_servers[interaction.guild.name]['radio_check']:
+                    view.add_item(onyourwave_setting_button(interaction))
 
-            embed = Embed(title="Сейчас играет", description=play_now, color=0xf1ca0d)
-            if data_servers[interaction.guild.name]['radio_check']:
-                embed.set_footer(text=f"{user_discord} запустил волну", icon_url=user_discord.avatar)
+                embed = Embed(title="Сейчас играет", description=play_now, color=0xf1ca0d)
+                if data_servers[interaction.guild.name]['radio_check'] or data_servers[interaction.guild.name]['stream_by_track_check']:
+                    embed.set_footer(text=f"{user_discord} запустил волну", icon_url=user_discord.avatar)
+                else:
+                    embed.set_footer(text=f"{user_discord} запустил трек", icon_url=user_discord.avatar)
+
+                if data_servers[interaction.guild.name]['cover_url']:
+                    embed.set_thumbnail(url=data_servers[interaction.guild.name]['cover_url'])
+
+                message = await interaction.channel.send(embed=embed, view=view)
+
+                data_servers[interaction.guild.name]['message_check'] = message
+
+            while voice_client.is_playing() or voice_client.is_paused():
+                if voice_client.is_playing():
+                    data_servers[interaction.guild.name]['last_activity_time'] = datetime.datetime.now()
+                await asyncio.sleep(0.1)
+
+            data_servers[interaction.guild.name]['skip'] = False
+
+            if data_servers[interaction.guild.name]['repeat_flag']:
+                url_or_trackname_or_filepath = data_servers[interaction.guild.name]['queue_repeat']
+
+            elif data_servers[interaction.guild.name]['radio_check'] or data_servers[interaction.guild.name]['stream_by_track_check']:
+                url_or_trackname_or_filepath = await play_radio(interaction=interaction, user_discord=user_discord)
+
             else:
-                embed.set_footer(text=f"{user_discord} запустил трек", icon_url=user_discord.avatar)
-
-            if data_servers[interaction.guild.name]['cover_url']:
-                embed.set_thumbnail(url=data_servers[interaction.guild.name]['cover_url'])
-
-            message = await interaction.channel.send(embed=embed, view=view)
-            now = datetime.datetime.now()
-            current_time = now.time()
-
-            # with open(filename, "a", encoding='windows 1251') as f:
-            #     f.seek(0, 2)  # перемещаем курсор в конец файла
-            #     f.write(f"Время: {current_time}\n"
-            #             f"Сервер: {interaction.guild.name}\n"
-            #             f"Музыка пользователя: {user_discord}"
-            #             f"{play_now}\n\n")
-            data_servers[interaction.guild.name]['message_check'] = message
-
-        while voice_client.is_playing() or voice_client.is_paused():
-            if voice_client.is_playing():
-                data_servers[interaction.guild.name]['last_activity_time'] = datetime.datetime.now()
-            await asyncio.sleep(1)
-        if data_servers[interaction.guild.name]['repeat_flag']:
-            data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['queue_repeat'], False))
-            return
-        elif data_servers[interaction.guild.name]['radio_check'] or data_servers[interaction.guild.name]['stream_by_track_check']:
-            await play_radio(interaction=interaction, user_discord=user_discord)
-        else:
-            if data_servers[interaction.guild.name]['index_play_now']+1 < len(data_servers[interaction.guild.name]['playlist']):
-                data_servers[interaction.guild.name]['index_play_now'] += 1
-                data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]))
-                data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
-                return
-            else:
-                await interaction.channel.send("Треки в очереди закончились")
-                return
+                if data_servers[interaction.guild.name]['index_play_now'] + 1 < len(
+                        data_servers[interaction.guild.name]['playlist']):
+                    data_servers[interaction.guild.name]['index_play_now'] += 1
+                    url_or_trackname_or_filepath = data_servers[interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]
+                else:
+                    await interaction.channel.send("Треки в очереди закончились")
+                    return
 
     except Exception as e:
         await interaction.channel.send(f"Произошла ошибка при проигрывании музыки: {e}.")
 
-@bot.command()
-async def clear_playlist(ctx):
-    global playlists, index_play_now
-    if ctx.guild.name not in playlists:
-        playlists[ctx.guild.name] = []
-        index_play_now = 0
-    else:
-        playlists[ctx.guild.name] = []
-        index_play_now = 0
-    with open("C:\\Users\\tima\\Pictures\\Gif\\giphy.gif", 'rb') as f:
-        file = discord.File(f)
-    await ctx.send(content="Очередь очищена", file=file)
+@start_play.autocomplete('url_or_trackname')
+async def search_yandex_music(interaction: discord.Interaction, search: str):
+    global tokens
+    user_discord = interaction.user
+    url_or_trackname = []
+    if str(user_discord) in tokens:
+        client_ym = Client(tokens[str(user_discord)]).init()
+        search_result = client_ym.search(search)
+        if search_result.tracks.results:
+            for item in search_result.tracks.results:
+                artists = ''
+                if item.artists:
+                    artists = ' - ' + ', '.join(artist.name for artist in item.artists)
+                url_or_trackname.append(item.title + artists)
+    return [app_commands.Choice(name=item, value=item) for item in url_or_trackname ]
 
 @tree.command(name='authorize', description="🔑Авторизация для использования сервиса Яндекс.Музыка")
 @app_commands.describe(token='Вам нужно указать свой токен от аккаунта Яндекс.Музыки')
@@ -1382,153 +1230,36 @@ async def authorize(interaction: discord.Interaction, token: str):
 
 @tree.command(name='log', description="Служебная команда")
 @app_commands.describe(server_name='Название сервера для которого нужно вывести лог')
+@app_commands.default_permissions()
 async def log(interaction: discord.Interaction, server_name: str):
     global data_servers
-    if str(interaction.user) == 'ti_jack#2994':
-        if server_name in data_servers:
-            for item in data_servers[server_name]:
-                print(f'{item}: {data_servers[server_name][item]}')
-        else:
-            print("Такого сервера в логах нет")
-    else:
-        interaction.response.send_message("Это служебная команда!", ephemeral=True)
+    # if str(interaction.user) == 'ti_jack#2994':
+    if server_name in data_servers:
+        message = ''
+        for item in data_servers[server_name]:
+            if item == 'lyrics' and data_servers[server_name][item]:
+                message += f'{item}: is present\n'
+            else:
+                message += f'{item}: {data_servers[server_name][item]}\n'
 
-@bot.command()
-async def pause(ctx):
-    global message_check
-    voice_client = ctx.guild.voice_client
-    if voice_client.is_playing():
-        voice_client.pause()
-        await ctx.send("Музыка на паузе.")
-        await message_check.remove_reaction('⏯️', ctx.author)
-    else:
-        await ctx.send("В настоящий момент ничего не играет.")
+        filename = f'{server_name}_log.txt'
+        with open(filename, 'w', encoding='utf-8') as file:
+            file.write(message)
 
-@bot.command()
-async def repeat(ctx):
-    global message_check, repeat_flag
-    voice_client = ctx.guild.voice_client
-    if repeat_flag:
-        await ctx.send("Повтор выключен.")
-        await message_check.remove_reaction('🔄', ctx.author)
-    else:
-        await ctx.send("Повтор включен.")
-        await message_check.add_reaction('🔄', ctx.author)
+        await interaction.response.send_message(file=discord.File(filename), ephemeral=True)
 
-@bot.command()
-async def resume(ctx):
-    global message_check
-    voice_client = ctx.guild.voice_client
-    if voice_client.is_paused():
-        voice_client.resume()
-        await ctx.send("Продолжаю.")
-        await message_check.remove_reaction('⏯️', ctx.author)
     else:
-        await ctx.send("В настоящий момент нет приостановленной музыки.")
+        await interaction.response.send_message("Такого сервера в логах нет", ephemeral=True)
+    # else:
+    #     await interaction.response.send_message("Это служебная команда!", ephemeral=True)
 
-@bot.command()
-async def disconnect(interaction: discord.Interaction):
+@log.autocomplete('server_name')
+async def autocomplete_log(interaction: discord.Interaction, search: str):
     global data_servers
-    voice_client = interaction.guild.voice_client
-    try:
-        if voice_client.is_connected():
-            if voice_client.is_playing():
-                voice_client.stop()
-            await voice_client.disconnect()
-
-            data_servers[interaction.guild.name]['playlist'] = []
-            data_servers[interaction.guild.name]['index_play_now'] = 0
-
-            data_servers[interaction.guild.name]['task'].cancel()
-            data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
-            data_servers[interaction.guild.name]['task_check_voice_clients'].cancel()
-
-            await remove_last_playing_message(interaction)
-
-            now = datetime.datetime.now()
-            current_time = now.time()
-            filename = "C:\\Users\\tima\\Documents\\Log YM\\" + f"log-{now:%Y-%m-%d}.txt"
-            # with open(filename, "a") as f:
-            #     f.seek(0, 2)  # перемещаем курсор в конец файла
-            #     f.write(f"Время: {current_time}\n"
-            #             f"Сервер: {interaction.guild.name}\n"
-            #             f"Бота отключил: {str(interaction.user)}\n"
-            #             f"Бот отключился от канала: {voice_client.channel}\n\n")
-    except Exception:
-        pass
-
-@bot.command()
-async def view_playlist(ctx):
-    global playlists
-
-    if ctx.guild.name not in playlists:
-        playlists[ctx.guild.name] = []
-
-    if playlists[ctx.guild.name]:
-        j = 0
-        message = "Треки в очереди:\n"
-        for i in range(len(playlists[ctx.guild.name])):
-            if j < 29:
-                message += f"{playlists[ctx.guild.name][i]}\n"
-                j += 1
-            else:
-                message += f"{playlists[ctx.guild.name][i]}\n"
-                await ctx.send(message)
-                j = 0
-                message = ""
-        if j > 0:
-            await ctx.send(message)
-
-    else:
-        await ctx.send("Очередь пуста.")
-
-@bot.command()
-async def view_playlist_ym(ctx, playlist_id=None):
-    user_discord = str(ctx.author)
-    client_ym = Client(tokens[user_discord]).init()
-    if not playlist_id:
-        try:
-            # Получаем список всех плейлистов пользователя
-            playlists = client_ym.users_playlists_list()
-            playlist_new = client_ym.users_likes_tracks()
-
-            # Формируем сообщение со списком плейлистов и их ID
-            message = f"Список плейлистов:\nМне нравится ID = 3, Треков: {len(playlist_new.tracks)}\n"
-            for playlist_ym in playlists:
-                playlist_id = playlist_ym.playlist_id.split(':')[1]
-                message += f"{playlist_ym.title} ID = {playlist_id}, Треков: {len(client_ym.users_playlists(int(playlist_id)).tracks)}\n"
-
-            # Отправляем сообщение с списком плейлистов в Discord
-            await ctx.send(message)
-        except Exception as e:
-            # Обрабатываем ошибку
-            await ctx.send(f"Произошла ошибка: {e}")
-    else:
-        try:
-            playlist_ym = client_ym.users_playlists(int(playlist_id))
-        except Exception:
-            with open("C:\\Users\\tima\\Pictures\\Gif\\spin-1.gif", 'rb') as f:
-                file = discord.File(f)
-            await ctx.send(content=f"Не удалось найти плейлист с ID {playlist_id}", file=file)
-            return
-        message = f"Треки в плейлисте {playlist_ym.title}:\n"
-        j = 0
-        for i in range(len(playlist_ym.tracks)):
-            track = client_ym.tracks(playlist_ym.tracks[i].track_id)[0]
-            if j < 29:
-                message += (f"{i + 1} - {track.title}\n")
-                j += 1
-            else:
-                message += (f"{i + 1} - {track.title}\n")
-                await ctx.send(message)
-                message = ""
-                j = 0
-        if j > 0:
-            await ctx.send(message)
+    return [app_commands.Choice(name=item, value=item) for item in data_servers if search in item]
 
 @tree.command(name='help', description="❓Справка по командам")
 async def commands(interaction: discord.Interaction):
-    global data_servers
     command = {'/play': 'Имеет необязательный аргумент \'url_or_trackname\'\n\n'
                         'При вызове команды без аргумента - предложит выбрать плейлист из списка и запустит его\n\n'
                         'В аргумент можно передать:\n'
@@ -1540,8 +1271,6 @@ async def commands(interaction: discord.Interaction):
                              'Без авторизации Вы не сможете пользоваться Яндекс.Музыкой\n\n'
                              'С инструкцией по получению токена можно ознакимиться здесь:\nhttps://github.com/MarshalX/yandex-music-api/discussions/513'
                }
-    if interaction.guild.name not in data_servers:
-        data_servers[interaction.guild.name] = data_server
 
     class next_command_button(Button):
         def __init__(self, interaction: discord.Interaction):
@@ -1583,68 +1312,11 @@ async def commands(interaction: discord.Interaction):
 
     await interaction.response.send_message(content=f'Команда {data_servers[interaction.guild.name]["command_now"]+1} из {len(command)}', embed=embed, view=view)
 
-@bot.command()
-async def no_right_remove(ctx, playlist_id):
-    global playlists, lyrics, response
-    voice_client = ctx.guild.voice_client
-
-    client_ym = Client(str(ctx.author)).init()
-
-    try:
-        playlist_new = client_ym.users_playlists(playlist_id)
-    except Exception:
-        await ctx.send(f"Не удалось найти плейлист с ID {playlist_id}")
-        return
-    array = []
-    for i in range(len(playlist_new.tracks)):
-        track_short = playlist_new.tracks[i]
-        track = client_ym.tracks(track_short.track_id)[0]
-        if not track.available:
-            if playlist_id == "3":
-                client_ym.users_likes_tracks_remove(track_short.track_id)
-            else:
-                client_ym.users_playlists_delete_track(kind=playlist_id_or_name, from_=i, to=i)
-            array.append([i, track_short.title])
-    if playlist_id == "3":
-        message = f"Удалённые треки из плейлиста Мне нравится:\n"
-    else:
-        message = f"Удалённые треки из плейлиста {playlist_new.title}:\n"
-
-    j = 0
-    for i in array:
-        track = i[1]
-        num = i[0]
-        if j < 29:
-            message += (f"{num} - {track}\n")
-            j += 1
-        else:
-            message += (f"{num} - {track}\n")
-            await ctx.send(message)
-            message = ""
-            j = 0
-    if j > 0:
-        await ctx.send(message)
-
 @client.event
 async def on_ready():
     await tree.sync()
     await client.change_presence(activity=discord.Activity(name="/help", type=discord.ActivityType.playing))
     print("Ready!")
-
-@bot.event
-async def on_reaction_add(reaction, user):
-    global message_check, repeat_flag, queue_repeat, index_play_now, task, lyrics, track_url, playlists
-    voice_client = reaction.message.guild.voice_client
-    # print('Пользователь {0} добавил реакцию {1.emoji} к сообщению {1.message.content}'.format(user.name, reaction))
-
-    ctx = await bot.get_context(reaction.message)
-
-@bot.event
-async def on_reaction_remove(reaction, user):
-    global message_check, repeat_flag
-    ctx = await bot.get_context(reaction.message)
-    # print('Пользователь {0} убрал реакцию {1.emoji} из сообщения {1.message.content}'.format(user.name, reaction))
-
 
 # Запускаем бота
 with open("token_discord_bot.txt", "r") as s:
