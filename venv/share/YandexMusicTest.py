@@ -30,6 +30,8 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 Глобальные переменные
 '''
 tokens = {}
+google_token = None
+YM_token = None
 settings_onyourwave = {}
 user = os.environ.get('USERNAME')
 output_path = f'C:\\Users\\{user}\\Music'  # Путь к папке, где будет сохранен аудиофайл
@@ -47,10 +49,10 @@ data_server = {'playlist': [],
                'track_id_play_now': None,
                'index_play_now': 0,
                'radio': None,
-               'user_discord_radio': None,
+               'user_discord_play': None,
                'radio_check': False,
                'stream_by_track_check': False,
-               'last_activity_time': datetime.datetime.now(),
+               'last_activity_time': None,
                'message_check': '',
                'command_now': 0
                }
@@ -67,8 +69,13 @@ if os.path.exists("tokens.txt") and os.path.getsize("tokens.txt") > 0:
         for line in lines:
             # удаляем символы переноса строки и разделяем данные по пробелу
             user_discord, token = line.strip().rsplit(maxsplit=1)
-            # добавляем пару ключ-значение в глобальный словарь
-            tokens[user_discord] = token
+            if user_discord == 'google':
+                google_token = token
+            elif user_discord == 'YandexMusicTest':
+                YM_token = token
+            else:
+                # добавляем пару ключ-значение в глобальный словарь
+                tokens[user_discord] = token
 
 
 '''
@@ -78,7 +85,7 @@ async def remove_last_playing_message(interaction: discord.Interaction):
     async for message in interaction.channel.history():
         if message.author == client.user and \
                 (message.content.startswith('Текст') or
-                 message.content.startswith('Вы не подключены') or
+                 message.content.startswith('Подключитесь') or
                  message.content.startswith('Ещё увидемся') or
                  message.content.startswith('Треки в очереди') or
                  message.content.startswith('Все покинули') or
@@ -101,12 +108,7 @@ async def check_voice_clients(interaction: discord.Interaction):
     while True:
         # Проверка наличия пользователей в голосовом канале
         if voice_client and not any(member != client.user for member in voice_client.channel.members):
-            if voice_client.is_playing():
-                voice_client.stop()
-            await voice_client.disconnect()
-            data_servers[interaction.guild.name]['task'].cancel()
-            data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
-            await remove_last_playing_message(interaction)
+            await disconnect(interaction)
             return
         await asyncio.sleep(1)
 async def check_inactivity(interaction: discord.Interaction):
@@ -117,10 +119,7 @@ async def check_inactivity(interaction: discord.Interaction):
         # проверяем, прошло ли более 5 минут с момента последней активности бота
         if datetime.datetime.now() - data_servers[interaction.guild.name]['last_activity_time'] > datetime.timedelta(
                 minutes=5) and not voice_client.is_playing() and voice_client:
-            await voice_client.disconnect()
-            await remove_last_playing_message(interaction)
-            data_servers[interaction.guild.name]['task'].cancel()
-            data_servers[interaction.guild.name]['task_check_voice_clients'].cancel()
+            await disconnect(interaction)
             return
         await asyncio.sleep(1)
 async def disconnect(interaction: discord.Interaction):
@@ -132,12 +131,30 @@ async def disconnect(interaction: discord.Interaction):
                 voice_client.stop()
             await voice_client.disconnect()
 
-            data_servers[interaction.guild.name]['playlist'] = []
-            data_servers[interaction.guild.name]['index_play_now'] = 0
-
             data_servers[interaction.guild.name]['task'].cancel()
             data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
             data_servers[interaction.guild.name]['task_check_voice_clients'].cancel()
+            data_servers[interaction.guild.name] = {'playlist': [],
+                                                   'repeat_flag': False,
+                                                   'queue_repeat': '',
+                                                   'index_play_now': 0,
+                                                   'task': None,
+                                                   'task_reserv': None,
+                                                   'task_check_voice_clients': None,
+                                                   'task_check_inactivity': None,
+                                                   'lyrics': None,
+                                                   'track_url': None,
+                                                   'cover_url': None,
+                                                   'track_id_play_now': None,
+                                                   'index_play_now': 0,
+                                                   'radio': None,
+                                                   'user_discord_play': None,
+                                                   'radio_check': False,
+                                                   'stream_by_track_check': False,
+                                                   'last_activity_time': None,
+                                                   'message_check': '',
+                                                   'command_now': 0
+                                                   }
             await remove_last_playing_message(interaction)
     except Exception:
         pass
@@ -220,8 +237,6 @@ async def add_queue(ctx, url_or_trackname_or_filepath):
 async def play_YouTube(url_or_trackname_or_filepath, user_discord, interaction: discord.Interaction):
     global data_servers
 
-    api_key = "AIzaSyB_OXBg1a2u4bnMVhh6hPZ1nxA398AfhdU"
-
     data_servers[interaction.guild.name]['track_url'] = url_or_trackname_or_filepath
     data_servers[interaction.guild.name]['track_id_play_now'] = None
     data_servers[interaction.guild.name]['radio_check'] = False
@@ -231,7 +246,7 @@ async def play_YouTube(url_or_trackname_or_filepath, user_discord, interaction: 
     video_id = re.findall(r'v=(\w+)', url_or_trackname_or_filepath)[0]
 
     # Создайте объект YouTube API
-    youtube = build('youtube', 'v3', developerKey=api_key)
+    youtube = build('youtube', 'v3', developerKey=google_token)
 
     # Получите информацию о видео
     video_info = youtube.videos().list(part='snippet', id=video_id).execute()
@@ -257,6 +272,8 @@ async def play_Yandex_Music_url(interaction: discord.Interaction, url_or_trackna
     global data_servers
 
     client_ym = Client(tokens[user_discord]).init()
+
+    data_servers[interaction.guild.name]['user_discord_play'] = user_discord
 
     numbers = [int(s) for s in url_or_trackname_or_filepath.split('/') if s.isdigit()]
     if len(numbers) == 1:
@@ -307,6 +324,8 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
     playlist_id = playlist_ym[0]
 
     client_ym = Client(tokens[user_discord]).init()
+
+    data_servers[interaction.guild.name]['user_discord_play'] = user_discord
 
     if playlist_id == "3":
         playlist_new = client_ym.users_likes_tracks()
@@ -461,6 +480,8 @@ async def send_search_request(interaction: discord.Interaction, query, user_disc
 
     client_ym = Client(tokens[user_discord]).init()
 
+    data_servers[interaction.guild.name]['user_discord_play'] = user_discord
+
     search_result = client_ym.search(query.replace('"', ''))
 
     type_to_name = {
@@ -520,7 +541,7 @@ async def play_radio(interaction: discord.Interaction, user_discord=None, first:
     if first:
         client_ym = Client(tokens[str(user_discord)]).init()
         data_servers[interaction.guild.name]['radio'] = Radio(client_ym)
-        data_servers[interaction.guild.name]['user_discord_radio'] = user_discord
+        data_servers[interaction.guild.name]['user_discord_play'] = user_discord
         for rotor in client_ym.rotor_stations_dashboard().stations:
             if rotor.station['name'] == "Моя волна":
                 station = rotor.station
@@ -707,10 +728,7 @@ class disconnect_button(Button):
         super().__init__(style=ButtonStyle.red, label="Отключить", emoji="📛", row=3)
 
     async def callback(self, interaction: discord.Interaction):
-        voice_client = interaction.guild.voice_client  # use the attribute
-        if voice_client.is_playing():
-            voice_client.stop()
-
+        voice_client = interaction.guild.voice_client
         await disconnect(interaction)
 class lyrics_button(Button):
     def __init__(self, interaction: discord.Interaction):
@@ -776,13 +794,14 @@ class stream_by_track_button(Button):
             voice_client.stop()
             data_servers[interaction.guild.name]['task'].cancel()
         await play_radio(interaction=interaction,
-                         user_discord=data_servers[interaction.guild.name]['user_discord_radio'],
+                         user_discord=data_servers[interaction.guild.name]['user_discord_play'],
                          first=True,
                          station_id='track:' + data_servers[interaction.guild.name]['track_id_play_now'],
                          station_from='track',
                          new=True)
 class PlaylistSelect(Select):
     def __init__(self, interaction: discord.Interaction):
+        self.interaction = interaction
         options = []
         user_discord = str(interaction.user)
         client_ym = Client(tokens[user_discord]).init()
@@ -802,7 +821,7 @@ class PlaylistSelect(Select):
 
     async def callback(self, interaction: discord.Interaction):
         global data_servers
-
+        await self.interaction.delete_original_response()
         voice_client = interaction.guild.voice_client
 
         data_servers[interaction.guild.name]['playlist'] = []
@@ -829,7 +848,7 @@ class onyourwave_setting_button(Button):
 
     async def callback(self, interaction: discord.Interaction):
         view = View(timeout=1200.0)
-        if interaction.user == data_servers[interaction.guild.name]['user_discord_radio']:
+        if interaction.user == data_servers[interaction.guild.name]['user_discord_play']:
             view.add_item(onyourwave_setting_diversity())
             view.add_item(onyourwave_setting_mood_energy())
             view.add_item(onyourwave_setting_language())
@@ -930,9 +949,29 @@ class onyourwave_setting_language(Select):
 @app_commands.describe(url_or_trackname='Вы можете указать: ссылку на трек из Яндекс.Музыки или YouTube, название трека')
 async def start_play(interaction: discord.Interaction, url_or_trackname: str = None):
     global data_servers, settings_onyourwave
-    # await interaction.response.defer()
+
     if interaction.guild.name not in data_servers:
-        data_servers[interaction.guild.name] = data_server
+        data_servers[interaction.guild.name] = {'playlist': [],
+                                               'repeat_flag': False,
+                                               'queue_repeat': '',
+                                               'index_play_now': 0,
+                                               'task': None,
+                                               'task_reserv': None,
+                                               'task_check_voice_clients': None,
+                                               'task_check_inactivity': None,
+                                               'lyrics': None,
+                                               'track_url': None,
+                                               'cover_url': None,
+                                               'track_id_play_now': None,
+                                               'index_play_now': 0,
+                                               'radio': None,
+                                               'user_discord_play': None,
+                                               'radio_check': False,
+                                               'stream_by_track_check': False,
+                                               'last_activity_time': None,
+                                               'message_check': '',
+                                               'command_now': 0
+                                               }
 
     if str(interaction.user) not in settings_onyourwave:
         settings_onyourwave[str(interaction.user)] = {'mood_energy': 'all',
@@ -973,8 +1012,10 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
         if not url_or_trackname_or_filepath:  # если не передан url
             view = View()
             view.add_item(PlaylistSelect(interaction))
-
-            await interaction.response.send_message(view=view, ephemeral=True)
+            try:
+                await interaction.response.send_message(view=view, ephemeral=True)
+            except discord.errors.InteractionResponded:
+                await interaction.edit_original_response(content='', view=view)
             return
 
         while True:
@@ -999,8 +1040,8 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
             elif "music.yandex.ru" in url_or_trackname_or_filepath:
 
                 if "|" not in url_or_trackname_or_filepath:
-                    if data_servers[interaction.guild.name]['user_discord_radio']:
-                        user_discord = data_servers[interaction.guild.name]['user_discord_radio']
+                    if data_servers[interaction.guild.name]['user_discord_play']:
+                        user_discord = data_servers[interaction.guild.name]['user_discord_play']
                     else:
                         user_discord = interaction.user
                 else:
@@ -1135,15 +1176,16 @@ async def search_yandex_music(interaction: discord.Interaction, search: str):
     global tokens
     user_discord = interaction.user
     url_or_trackname = []
-    if str(user_discord) in tokens:
-        client_ym = Client(tokens[str(user_discord)]).init()
-        search_result = client_ym.search(search)
-        if search_result.tracks.results:
-            for item in search_result.tracks.results:
-                artists = ''
-                if item.artists:
-                    artists = ' - ' + ', '.join(artist.name for artist in item.artists)
-                url_or_trackname.append(item.title + artists)
+    if ("youtube.com" or "music.yandex.ru") not in search:
+        if str(user_discord) in tokens:
+            client_ym = Client(tokens[str(user_discord)]).init()
+            search_result = client_ym.search(search)
+            if search_result.tracks.results:
+                for item in search_result.tracks.results:
+                    artists = ''
+                    if item.artists:
+                        artists = ' - ' + ', '.join(artist.name for artist in item.artists)
+                    url_or_trackname.append(item.title + artists)
     return [app_commands.Choice(name=item, value=item) for item in url_or_trackname ]
 
 @tree.command(name='authorize', description="🔑Авторизация для использования сервиса Яндекс.Музыка")
@@ -1257,13 +1299,4 @@ async def on_ready():
     print("Ready!")
 
 # Запускаем бота
-with open("token_discord_bot.txt", "r") as s:
-    # читаем строки из файла
-    lines = s.readlines()
-    # перебираем строки и добавляем каждую пару ключ-значение в глобальный словарь
-    for line in lines:
-        # удаляем символы переноса строки и разделяем данные по пробелу
-        discord_bot, token = line.strip().rsplit(maxsplit=1)
-        # добавляем пару ключ-значение в глобальный словарь
-        if discord_bot == 'YandexMusicTest':
-            client.run(token)
+client.run(YM_token)
