@@ -30,6 +30,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 Глобальные переменные
 '''
 tokens = {}
+birthdays = {}
 google_token = None
 YM_token = None
 settings_onyourwave = {}
@@ -76,19 +77,26 @@ if os.path.exists("tokens.txt") and os.path.getsize("tokens.txt") > 0:
             else:
                 # добавляем пару ключ-значение в глобальный словарь
                 tokens[user_discord] = token
+                birthdays[user_discord] = False
 
 
 '''
 Функции для обработки команд
 '''
+async def birthday_send(interaction: discord.Interaction):
+    global birthdays
+    if str(interaction.user) in tokens:
+        birthdays[str(interaction.user)] = True
+        client_ym = Client(tokens[str(interaction.user)]).init()
+        if client_ym.me.account.now.split('T')[0].split('-', maxsplit=1)[1] == \
+                client_ym.me.account.birthday.split('-', maxsplit=1)[1]:
+            await interaction.response.send_message(f"С Днём Рождения {client_ym.me.account.first_name} 🎉🎊",
+                                                    ephemeral=True)
 async def remove_last_playing_message(interaction: discord.Interaction):
     async for message in interaction.channel.history():
         if message.author == client.user and \
                 (message.content.startswith('Текст') or
-                 message.content.startswith('Подключитесь') or
-                 message.content.startswith('Ещё увидемся') or
                  message.content.startswith('Треки в очереди') or
-                 message.content.startswith('Все покинули') or
                  message.content.startswith('Не удалось') or
                  (isinstance(message.embeds, list) and len(message.embeds) > 0)):
             try:
@@ -134,27 +142,7 @@ async def disconnect(interaction: discord.Interaction):
             data_servers[interaction.guild.name]['task'].cancel()
             data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
             data_servers[interaction.guild.name]['task_check_voice_clients'].cancel()
-            data_servers[interaction.guild.name] = {'playlist': [],
-                                                   'repeat_flag': False,
-                                                   'queue_repeat': '',
-                                                   'index_play_now': 0,
-                                                   'task': None,
-                                                   'task_reserv': None,
-                                                   'task_check_voice_clients': None,
-                                                   'task_check_inactivity': None,
-                                                   'lyrics': None,
-                                                   'track_url': None,
-                                                   'cover_url': None,
-                                                   'track_id_play_now': None,
-                                                   'index_play_now': 0,
-                                                   'radio': None,
-                                                   'user_discord_play': None,
-                                                   'radio_check': False,
-                                                   'stream_by_track_check': False,
-                                                   'last_activity_time': None,
-                                                   'message_check': '',
-                                                   'command_now': 0
-                                                   }
+            data_servers[interaction.guild.name] = data_server.copy()
             await remove_last_playing_message(interaction)
     except Exception:
         pass
@@ -949,29 +937,8 @@ class onyourwave_setting_language(Select):
 @app_commands.describe(url_or_trackname='Вы можете указать: ссылку на трек из Яндекс.Музыки или YouTube, название трека')
 async def start_play(interaction: discord.Interaction, url_or_trackname: str = None):
     global data_servers, settings_onyourwave
-
     if interaction.guild.name not in data_servers:
-        data_servers[interaction.guild.name] = {'playlist': [],
-                                               'repeat_flag': False,
-                                               'queue_repeat': '',
-                                               'index_play_now': 0,
-                                               'task': None,
-                                               'task_reserv': None,
-                                               'task_check_voice_clients': None,
-                                               'task_check_inactivity': None,
-                                               'lyrics': None,
-                                               'track_url': None,
-                                               'cover_url': None,
-                                               'track_id_play_now': None,
-                                               'index_play_now': 0,
-                                               'radio': None,
-                                               'user_discord_play': None,
-                                               'radio_check': False,
-                                               'stream_by_track_check': False,
-                                               'last_activity_time': None,
-                                               'message_check': '',
-                                               'command_now': 0
-                                               }
+        data_servers[interaction.guild.name] = data_server.copy()
 
     if str(interaction.user) not in settings_onyourwave:
         settings_onyourwave[str(interaction.user)] = {'mood_energy': 'all',
@@ -1003,13 +970,20 @@ async def start_play(interaction: discord.Interaction, url_or_trackname: str = N
     data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, url_or_trackname_or_filepath=url_or_trackname))
 async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: str = None):
     try:
-        global output_path, tokens, data_servers
+        global data_servers
 
         voice_client = interaction.guild.voice_client
 
         data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
 
         if not url_or_trackname_or_filepath:  # если не передан url
+
+            if str(interaction.user) not in tokens:
+                await interaction.response.send_message(
+                    f"Пользователь {str(user_discord)} не вошёл в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize",
+                    ephemeral=True)
+                return
+
             view = View()
             view.add_item(PlaylistSelect(interaction))
             try:
@@ -1073,15 +1047,6 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     await interaction.response.send_message(f"Файл `{url_or_trackname_or_filepath}` не найден.", ephemeral=True)
                     return
 
-            elif ".mp3" in url_or_trackname_or_filepath or ".flac" in url_or_trackname_or_filepath:
-                play_now = url_or_trackname_or_filepath
-                audio_file_path = f'{output_path}\\{url_or_trackname_or_filepath}'
-
-                # Проверяем, что файл существует
-                if not os.path.isfile(audio_file_path):
-                    await interaction.response.send_message(f"Файл \"{url_or_trackname_or_filepath}\" не найден.", ephemeral=True)
-                    return
-
             else:
                 if "|" not in url_or_trackname_or_filepath:
                     user_discord = interaction.user
@@ -1143,6 +1108,9 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     embed.set_thumbnail(url=data_servers[interaction.guild.name]['cover_url'])
 
                 message = await interaction.channel.send(embed=embed, view=view)
+
+                if not birthdays[str(interaction.user)]:
+                    await birthday_send(interaction)
 
                 data_servers[interaction.guild.name]['message_check'] = message
 
@@ -1211,10 +1179,13 @@ async def authorize(interaction: discord.Interaction, token: str):
             f.write(user_discord + " " + str(token) + "\n")
 
 @tree.command(name='log', description="Служебная команда")
-@app_commands.describe(server_name='Название сервера для которого нужно вывести лог')
+@app_commands.describe(server_name='По умоляанию Ваш сервер.')
 @app_commands.default_permissions()
-async def log(interaction: discord.Interaction, server_name: str):
+async def log(interaction: discord.Interaction, server_name: str = None):
     global data_servers
+
+    if not server_name:
+        server_name = interaction.guild.name
 
     if server_name in data_servers:
         message = ''
