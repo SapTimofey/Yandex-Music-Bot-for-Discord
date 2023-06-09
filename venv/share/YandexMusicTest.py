@@ -1,3 +1,4 @@
+import yandex_music
 from yandex_music import Client, Track
 
 import discord
@@ -36,27 +37,29 @@ YM_token = None
 settings_onyourwave = {}
 user = os.environ.get('USERNAME')
 output_path = f'C:\\Users\\{user}\\Music'  # Путь к папке, где будет сохранен аудиофайл
-data_server = {'playlist': [],
-               'repeat_flag': False,
-               'queue_repeat': '',
-               'index_play_now': 0,
-               'task': None,
-               'task_reserv': None,
-               'task_check_voice_clients': None,
-               'task_check_inactivity': None,
-               'lyrics': None,
-               'track_url': None,
-               'cover_url': None,
-               'track_id_play_now': None,
-               'index_play_now': 0,
-               'radio': None,
-               'user_discord_play': None,
-               'radio_check': False,
-               'stream_by_track_check': False,
-               'last_activity_time': datetime.datetime.now(),
-               'message_check': '',
-               'command_now': 0
-               }
+data_server = {
+    'playlist': [],
+    'repeat_flag': False,
+    'queue_repeat': '',
+    'index_play_now': 0,
+    'task': None,
+    'task_reserv': None,
+    'task_check_voice_clients': None,
+    'task_check_inactivity': None,
+    'lyrics': None,
+    'track_url': None,
+    'cover_url': None,
+    'track_id_play_now': None,
+    'index_play_now': 0,
+    'radio': None,
+    'user_discord_play': None,
+    'radio_check': False,
+    'stream_by_track_check': False,
+    'last_activity_time': datetime.datetime.now(),
+    'message_check': '',
+    'command_now': 0,
+    'duration': 0
+    }
 data_servers = {}
 
 
@@ -83,6 +86,10 @@ if os.path.exists("tokens.txt") and os.path.getsize("tokens.txt") > 0:
 '''
 Функции для обработки команд
 '''
+async def milliseconds_to_time(milliseconds):
+    seconds, milliseconds = divmod(milliseconds, 1000)
+    minutes, seconds = divmod(seconds, 60)
+    return f"{minutes:02d}:{seconds:02d}"
 async def birthday_send(interaction: discord.Interaction):
     global birthdays
     if str(interaction.user) in tokens:
@@ -97,6 +104,8 @@ async def remove_last_playing_message(interaction: discord.Interaction):
         if message.author == client.user and \
                 (message.content.startswith('Текст') or
                  message.content.startswith('Треки в очереди') or
+                 message.content.startswith('Не удалось') or
+                 message.content.startswith('Произошла ошибка') or
                  message.content.startswith('Не удалось') or
                  (isinstance(message.embeds, list) and len(message.embeds) > 0)):
             try:
@@ -258,153 +267,160 @@ async def play_YouTube(url_or_trackname_or_filepath, user_discord, interaction: 
     return [play_now, audio_file_path]
 async def play_Yandex_Music_url(interaction: discord.Interaction, url_or_trackname_or_filepath, user_discord):
     global data_servers
-
-    client_ym = Client(tokens[str(user_discord)]).init()
-
     data_servers[interaction.guild.name]['user_discord_play'] = user_discord
-
     numbers = [int(s) for s in url_or_trackname_or_filepath.split('/') if s.isdigit()]
-    if len(numbers) == 1:
-        track_id = numbers[0]
-        track = client_ym.tracks(track_id)[0]
-    else:
-        album_id = numbers[0]
-        track_id = numbers[1]
-        track = client_ym.tracks(f'{track_id}:{album_id}')[0]
+    error_count = 0
+    while error_count < 3:
+        try:
+            client_ym = Client(tokens[str(user_discord)]).init()
 
-    track.download(f'C:\\Users\\{user}\\Music\\YM_{user_discord}.mp3')
-    data_servers[interaction.guild.name]['track_id_play_now'] = track.id
+            if len(numbers) == 1:
+                track_id = numbers[0]
+                track = client_ym.tracks(track_id)[0]
+            else:
+                album_id = numbers[0]
+                track_id = numbers[1]
+                track = client_ym.tracks(f'{track_id}:{album_id}')[0]
 
-    try:
-        data_servers[interaction.guild.name]['lyrics'] = track.get_lyrics().fetch_lyrics()
-    except Exception:
-        data_servers[interaction.guild.name]['lyrics'] = None
+            track.download(f'C:\\Users\\{user}\\Music\\YM_{user_discord}.mp3')
+            data_servers[interaction.guild.name]['track_id_play_now'] = track.id
+            data_servers[interaction.guild.name]['duration'] = track.duration_ms
 
-    base_url = 'https://music.yandex.ru/track/'
-    data_servers[interaction.guild.name]['track_url'] = base_url + str(track_id)
+            try:
+                data_servers[interaction.guild.name]['lyrics'] = track.get_lyrics().fetch_lyrics()
+            except yandex_music.exceptions.NotFoundError:
+                data_servers[interaction.guild.name]['lyrics'] = None
 
-    if track.cover_uri:
-        data_servers[interaction.guild.name]['cover_url'] = f"https://{track.cover_uri.replace('%%', '200x200')}"
-    else:
-        data_servers[interaction.guild.name]['cover_url'] = None
+            base_url = 'https://music.yandex.ru/track/'
+            data_servers[interaction.guild.name]['track_url'] = base_url + str(track_id)
 
-    artists = track.artists
-    if not artists:
-        artist_all = ""
-    else:
-        artist_names = [artist.name for artist in artists]  # получаем список имен артистов
-        artist_all = ", ".join(artist_names)  # объединяем их через запятую
+            if track.cover_uri:
+                data_servers[interaction.guild.name]['cover_url'] = \
+                    f"https://{track.cover_uri.replace('%%', '200x200')}"
+            else:
+                data_servers[interaction.guild.name]['cover_url'] = None
 
-    if data_servers[interaction.guild.name]['radio_check']:
-        play_now = f"\nРадио: Моя волна\nТрек: {track.title}\nИсполнители: {artist_all}\n"
-    elif data_servers[interaction.guild.name]['stream_by_track_check']:
-        play_now = f"\nРадио: Моя волна по треку\nТрек: {track.title}\nИсполнители: {artist_all}\n"
-    else:
-        play_now = f"\nТрек: {track.title}\nИсполнители: {artist_all}\n"
-    audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
+            artists = track.artists
+            if not artists:
+                artist_all = ""
+            else:
+                artist_names = [artist.name for artist in artists]  # получаем список имен артистов
+                artist_all = ", ".join(artist_names)  # объединяем их через запятую
+            play_now = ""
+            if data_servers[interaction.guild.name]['radio_check']:
+                play_now += "\nРадио: Моя волна"
+            elif data_servers[interaction.guild.name]['stream_by_track_check']:
+                play_now += "\nРадио: Моя волна по треку"
+            play_now += f"\nТрек: {track.title}" + \
+                        f"\nИсполнители: {artist_all}"
 
-    return [play_now, audio_file_path]
+            audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
+
+            return [play_now, audio_file_path]
+        except Exception as e:
+            if error_count < 2:
+                await interaction.channel.send(f'Произошла ошибка: {e}. Подождите')
+                await asyncio.sleep(1)
+                error_count += 1
+            else:
+                await interaction.channel.send("Не удалось установить соединение с сервисом Яндекс.Музыка")
+                return False
 async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_trackname_or_filepath, user_discord):
     global data_servers
-    voice_client = interaction.guild.voice_client
-
+    error_count = 0
     playlist_ym = url_or_trackname_or_filepath.split(',')
     playlist_id = playlist_ym[0]
-    client_ym = Client(tokens[str(user_discord)]).init()
 
     data_servers[interaction.guild.name]['user_discord_play'] = user_discord
 
-    if playlist_id == "3":
-        playlist_new = client_ym.users_likes_tracks()
-    else:
+    while error_count < 3:
         try:
-            playlist_new = client_ym.users_playlists(playlist_id)
-        except Exception:
-            p = await send_search_request(interaction, url_or_trackname_or_filepath, user_discord)
-            if not p:
-                return False
+            client_ym = Client(tokens[str(user_discord)]).init()
+            if playlist_id == "3":
+                playlist_new = client_ym.users_likes_tracks()
+            else:
+                try:
+                    playlist_new = client_ym.users_playlists(playlist_id)
+                except yandex_music.exceptions.NotFoundError:
+                    p = await send_search_request(interaction, url_or_trackname_or_filepath, user_discord)
+                    if not p:
+                        return False
 
-            play_now = p[0]
-            audio_file_path = p[1]
-            return [play_now, audio_file_path]
+                    play_now = p[0]
+                    audio_file_path = p[1]
+                    return [play_now, audio_file_path]
+            if not data_servers[interaction.guild.name]['playlist']:
+                for i in range(len(playlist_new.tracks)):
+                    track_short = playlist_new.tracks[i]
+                    track = client_ym.tracks(track_short.track_id)[0]
+                    if track.available:
+                        data_servers[interaction.guild.name]['playlist'].append(f"{user_discord}|{playlist_id},{i + 1}")
 
-    for i in range(len(playlist_new.tracks)):
-        data_servers[interaction.guild.name]['playlist'].append(f"{user_discord}|{playlist_id},{i + 1}")
-
-    try:
-        track_short = playlist_new.tracks[int(playlist_ym[1]) - 1]
-        index_track = int(playlist_ym[1])
-    except Exception:
-        track_short = playlist_new.tracks[0]
-        index_track = 1
-
-    track = client_ym.tracks(track_short.track_id)[0]
-
-    if not track.available:
-        await interaction.response.send_message(f"{index_track} - {track.title} - трек отозван правообладателем",
-                                                ephemeral=True)
-        if data_servers[interaction.guild.name]['index_play_now'] + 1 < len(
-                data_servers[interaction.guild.name]['playlist']):
-            voice_client.stop()
-            data_servers[interaction.guild.name]['index_play_now'] += 1
             try:
-                data_servers[interaction.guild.name]['task'].cancel()
-            except Exception as e:
-                await interaction.response.send_message(f"Произошла ошибка: {e}", ephemeral=True)
+                track_short = playlist_new.tracks[int(playlist_ym[1]) - 1]
+                index_track = int(playlist_ym[1])
+            except IndexError:
+                track_short = playlist_new.tracks[0]
+                index_track = 1
+
+            track = client_ym.tracks(track_short.track_id)[0]
+
+            artists = track.artists
+            if not artists:
+                artist_all = ""
+            else:
+                artist_names = [artist.name for artist in artists]  # получаем список имен артистов
+                artist_all = ", ".join(artist_names)  # объединяем их через запятую
+            if playlist_id == "3":
+                play_now = "\nПлейлист: Мне нравится"
+            else:
+                play_now = f"\nПлейлист: {playlist_new.title}"
+            play_now += f"\nТрек: {track.title}" + \
+                        f"\nИсполнители: {artist_all}" + \
+                        f"\nНомер трека: {index_track}\\{len(playlist_new.tracks)}"
+
+            track.download(f'C:\\Users\\{user}\\Music\\YM_{user_discord}.mp3')
+            data_servers[interaction.guild.name]['duration'] = track.duration_ms
+
+            try:
+                data_servers[interaction.guild.name]['lyrics'] = track.get_lyrics().fetch_lyrics()
+            except yandex_music.exceptions.NotFoundError:
+                data_servers[interaction.guild.name]['lyrics'] = None
+            except ValueError:
+                data_servers[interaction.guild.name]['lyrics'] = None
+
+            if track.desired_visibility:
+                data_servers[interaction.guild.name]['track_url'] = None
+                data_servers[interaction.guild.name]['track_id_play_now'] = None
+            else:
+                data_servers[interaction.guild.name]['track_id_play_now'] = track.id
+                base_url = 'https://music.yandex.ru/track/'
+                if ":" in track_short.track_id:
+                    data_servers[interaction.guild.name]['track_url'] = \
+                        base_url + str(track_short.track_id).split(":")[0]
+                else:
+                    data_servers[interaction.guild.name]['track_url'] = base_url + str(track_short.track_id)
+
+            if track.cover_uri:
+                data_servers[interaction.guild.name]['cover_url'] = \
+                    f"https://{track.cover_uri.replace('%%', '200x200')}"
+            else:
+                data_servers[interaction.guild.name]['cover_url'] = None
+
+            audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
+
+            return [play_now, audio_file_path]
+        except Exception as e:
+            if error_count < 2:
+                await interaction.channel.send(f'Произошла ошибка: {e}. Подождите')
+                await asyncio.sleep(1)
+                error_count += 1
+            else:
+                await interaction.channel.send("Не удалось установить соединение с сервисом Яндекс.Музыка")
                 return False
-            data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[
-                interaction.guild.name]['playlist'][data_servers[interaction.guild.name]['index_play_now']]))
-            data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
-            return False
-        else:
-            await interaction.channel.send("Треки в очереди закончились")
-            return False
-    artists = track.artists
-    if not artists:
-        artist_all = ""
-    else:
-        artist_names = [artist.name for artist in artists]  # получаем список имен артистов
-        artist_all = ", ".join(artist_names)  # объединяем их через запятую
-    if playlist_id == "3":
-        play_now = f"\nПлейлист: Мне нравится\nТрек: {track.title}\nИсполнители: {artist_all}\nНомер трека: {index_track}\\{len(playlist_new.tracks)}"
-    else:
-        play_now = f"\nПлейлист: {playlist_new.title}\nТрек: {track.title}\nИсполнители: {artist_all}\nНомер трека: {index_track}\\{len(playlist_new.tracks)}"
-
-    track.download(f'C:\\Users\\{user}\\Music\\YM_{user_discord}.mp3')
-    try:
-        data_servers[interaction.guild.name]['lyrics'] = track.get_lyrics().fetch_lyrics()
-    except Exception:
-        data_servers[interaction.guild.name]['lyrics'] = None
-
-    if track.desired_visibility:
-        data_servers[interaction.guild.name]['track_url'] = None
-        data_servers[interaction.guild.name]['track_id_play_now'] = None
-    else:
-        data_servers[interaction.guild.name]['track_id_play_now'] = track.id
-        base_url = 'https://music.yandex.ru/track/'
-        if ":" in track_short.track_id:
-            data_servers[interaction.guild.name]['track_url'] = base_url + str(track_short.track_id).split(":")[0]
-        else:
-            data_servers[interaction.guild.name]['track_url'] = base_url + str(track_short.track_id)
-
-    if track.cover_uri:
-        data_servers[interaction.guild.name]['cover_url'] = f"https://{track.cover_uri.replace('%%', '200x200')}"
-    else:
-        data_servers[interaction.guild.name]['cover_url'] = None
-
-    audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
-
-    return [play_now, audio_file_path]
 async def send_search_request(interaction: discord.Interaction, query, user_discord):
     global data_servers
-    voice_client = interaction.guild.voice_client
-
-    client_ym = Client(tokens[user_discord]).init()
-
     data_servers[interaction.guild.name]['user_discord_play'] = user_discord
-
-    search_result = client_ym.search(query.replace('"', ''))
-
     type_to_name = {
         'track': 'трек',
         'artist': 'исполнитель',
@@ -415,74 +431,104 @@ async def send_search_request(interaction: discord.Interaction, query, user_disc
         'podcast': 'подкаст',
         'podcast_episode': 'эпизод подкаста',
     }
+    error_count = 0
 
-    type_ = search_result.best.type
-    best = search_result.best.result
-    if type_ in ['track', 'podcast_episode']:
-        track = client_ym.tracks(best.track_id)[0]
-        data_servers[interaction.guild.name]['track_id_play_now'] = track.id
-        artists = track.artists
-        if not artists:
-            artist_all = ""
-        else:
-            artist_names = [artist.name for artist in artists]  # получаем список имен артистов
-            artist_all = ", ".join(artist_names)  # объединяем их через запятую
-        play_now = f"\nТрек: {track.title}\nИсполнители: {artist_all}"
-
-        track.download(f'{output_path}\\YM_{user_discord}.mp3')
-
+    while error_count < 3:
         try:
-            data_servers[interaction.guild.name]['lyrics'] = track.get_lyrics().fetch_lyrics()
-        except Exception:
-            data_servers[interaction.guild.name]['lyrics'] = None
+            client_ym = Client(tokens[str(user_discord)]).init()
 
-        if track.desired_visibility:
-            data_servers[interaction.guild.name]['track_url'] = None
-        else:
+            search_result = client_ym.search(query)
+
+            type_ = search_result.best.type
+            best = search_result.best.result
+            if type_ in ['track', 'podcast_episode']:
+                track = client_ym.tracks(best.track_id)[0]
+                data_servers[interaction.guild.name]['track_id_play_now'] = track.id
+                data_servers[interaction.guild.name]['duration'] = track.duration_ms
+                artists = track.artists
+                if not artists:
+                    artist_all = ""
+                else:
+                    artist_names = [artist.name for artist in artists]  # получаем список имен артистов
+                    artist_all = ", ".join(artist_names)  # объединяем их через запятую
+                play_now = f"\nТрек: {track.title}\nИсполнители: {artist_all}"
+
+                track.download(f'{output_path}\\YM_{user_discord}.mp3')
+
+                try:
+                    data_servers[interaction.guild.name]['lyrics'] = track.get_lyrics().fetch_lyrics()
+                except yandex_music.exceptions.NotFoundError:
+                    data_servers[interaction.guild.name]['lyrics'] = None
+
+                if track.desired_visibility:
+                    data_servers[interaction.guild.name]['track_url'] = None
+                else:
+                    base_url = 'https://music.yandex.ru/track/'
+                    if ":" in track.track_id:
+                        data_servers[interaction.guild.name]['track_url'] = base_url + str(track.track_id).split(":")[0]
+                    else:
+                        data_servers[interaction.guild.name]['track_url'] = base_url + str(track.track_id)
+
+                if track.cover_uri:
+                    data_servers[interaction.guild.name]['cover_url'] = f"https://{track.cover_uri.replace('%%', '200x200')}"
+                else:
+                    data_servers[interaction.guild.name]['cover_url'] = None
+
+                audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
+
+                return [play_now, audio_file_path]
+            else:
+                data_servers[interaction.guild.name]['track_id_play_now'] = None
+                await interaction.response.send_message("Не удалось найти трек с таким названием", ephemeral=True)
+                return False
+        except Exception as e:
+            if error_count < 2:
+                await interaction.channel.send(f'Произошла ошибка: {e}. Подождите')
+                await asyncio.sleep(1)
+                error_count += 1
+            else:
+                await interaction.channel.send("Не удалось установить соединение с сервисом Яндекс.Музыка")
+                return False
+async def play_radio(interaction: discord.Interaction, user_discord=None, first_track: bool = False, station_id: str = None, station_from: str = None, new_task: bool=False):
+    global data_servers
+    error_count = 0
+    while error_count < 3:
+        try:
+            if first_track:
+                client_ym = Client(tokens[str(user_discord)]).init()
+                data_servers[interaction.guild.name]['radio'] = Radio(client_ym)
+                data_servers[interaction.guild.name]['user_discord_play'] = user_discord
+                for rotor in client_ym.rotor_stations_dashboard().stations:
+                    if rotor.station['name'] == "Моя волна":
+                        station = rotor.station
+                _station_id = station_id or f'{station.id.type}:{station.id.tag}'
+                _station_from = station_from or station.id_for_from
+                track = data_servers[interaction.guild.name]['radio'].start_radio(_station_id, _station_from)
+            else:
+                track = data_servers[interaction.guild.name]['radio'].play_next()
+
+            data_servers[interaction.guild.name]['track_id_play_now'] = track.id
+            data_servers[interaction.guild.name]['track_id_play_now'] = track.duration_ms
             base_url = 'https://music.yandex.ru/track/'
             if ":" in track.track_id:
                 data_servers[interaction.guild.name]['track_url'] = base_url + str(track.track_id).split(":")[0]
             else:
                 data_servers[interaction.guild.name]['track_url'] = base_url + str(track.track_id)
 
-        if track.cover_uri:
-            data_servers[interaction.guild.name]['cover_url'] = f"https://{track.cover_uri.replace('%%', '200x200')}"
-        else:
-            data_servers[interaction.guild.name]['cover_url'] = None
-
-        audio_file_path = f'{output_path}\\YM_{user_discord}.mp3'
-
-        return [play_now, audio_file_path]
-    else:
-        data_servers[interaction.guild.name]['track_id_play_now'] = None
-        await interaction.response.send_message("Не удалось найти трек с таким названием", ephemeral=True)
-        return False
-async def play_radio(interaction: discord.Interaction, user_discord=None, first: bool = False, station_id: str = None, station_from: str = None, new: bool=False):
-    global data_servers
-    if first:
-        client_ym = Client(tokens[str(user_discord)]).init()
-        data_servers[interaction.guild.name]['radio'] = Radio(client_ym)
-        data_servers[interaction.guild.name]['user_discord_play'] = user_discord
-        for rotor in client_ym.rotor_stations_dashboard().stations:
-            if rotor.station['name'] == "Моя волна":
-                station = rotor.station
-        _station_id = station_id or f'{station.id.type}:{station.id.tag}'
-        _station_from = station_from or station.id_for_from
-        track = data_servers[interaction.guild.name]['radio'].start_radio(_station_id, _station_from)
-    else:
-        track = data_servers[interaction.guild.name]['radio'].play_next()
-
-    data_servers[interaction.guild.name]['track_id_play_now'] = track.id
-    base_url = 'https://music.yandex.ru/track/'
-    if ":" in track.track_id:
-        data_servers[interaction.guild.name]['track_url'] = base_url + str(track.track_id).split(":")[0]
-    else:
-        data_servers[interaction.guild.name]['track_url'] = base_url + str(track.track_id)
-
-    if new:
-        data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['track_url']))
-    else:
-        return data_servers[interaction.guild.name]['track_url']
+            if new_task:
+                data_servers[interaction.guild.name]['task'] = \
+                    asyncio.create_task(play(interaction, data_servers[interaction.guild.name]['track_url']))
+                break
+            else:
+                return data_servers[interaction.guild.name]['track_url']
+        except Exception as e:
+            if error_count < 2:
+                await interaction.channel.send(f'Произошла ошибка: {e}. Подождите')
+                await asyncio.sleep(1)
+                error_count += 1
+            else:
+                await interaction.channel.send("Не удалось установить соединение с сервисом Яндекс.Музыка")
+                return False
 
 
 '''
@@ -605,16 +651,14 @@ class next_button(Button):
                          label="К следующему",
                          emoji="⏭️",
                          row=1,
-                         disabled=data_servers[interaction.guild.name]['index_play_now'] + 1 >= len(
-                             data_servers[interaction.guild.name]['playlist']) and not
+                         disabled=data_servers[interaction.guild.name]['index_play_now'] + 1 >=
+                                  len(data_servers[interaction.guild.name]['playlist']) and not
                                   data_servers[interaction.guild.name]['radio_check'] and not
                                   data_servers[interaction.guild.name]['stream_by_track_check'])
 
     async def callback(self, interaction: discord.Interaction):
-        global data_servers
         voice_client = interaction.guild.voice_client
         voice_client.stop()
-        data_servers[interaction.guild.name]['repeat_flag'] = False
 class prev_button(Button):
     def __init__(self, interaction: discord.Interaction):
         super().__init__(style=ButtonStyle.primary,
@@ -630,7 +674,6 @@ class prev_button(Button):
         voice_client = interaction.guild.voice_client
         voice_client.stop()
         data_servers[interaction.guild.name]['index_play_now'] -= 2
-        data_servers[interaction.guild.name]['repeat_flag'] = False
 class pause_resume_button(Button):
     def __init__(self):
         super().__init__(style=ButtonStyle.primary, label="Пауза/Продолжить", emoji="⏯️", row=1)
@@ -712,10 +755,10 @@ class stream_by_track_button(Button):
             data_servers[interaction.guild.name]['task'].cancel()
         await play_radio(interaction=interaction,
                          user_discord=data_servers[interaction.guild.name]['user_discord_play'],
-                         first=True,
+                         first_track=True,
                          station_id='track:' + data_servers[interaction.guild.name]['track_id_play_now'],
                          station_from='track',
-                         new=True)
+                         new_task=True)
 class PlaylistSelect(Select):
     def __init__(self, interaction: discord.Interaction):
         self.interaction = interaction
@@ -723,24 +766,38 @@ class PlaylistSelect(Select):
         user_discord = str(interaction.user)
         client_ym = Client(tokens[user_discord]).init()
 
-        options.append(SelectOption(label="Продолжить слушать", value="1", description="Запустить трек, на котором вы остановились"))
-        options.append(SelectOption(label="Моя волна", value="2", description="Радио"))
-        options.append(SelectOption(label="Мне нравится", value="3",
-                                    description=f"Количество треков: {len(client_ym.users_likes_tracks())}"))
+        options.append(SelectOption(
+            label="Продолжить слушать",
+            value="1",
+            description="Запустить трек, на котором вы остановились")
+        )
+        options.append(SelectOption(
+            label="Моя волна",
+            value="2",
+            description="Радио")
+        )
+        options.append(SelectOption(
+            label="Мне нравится",
+            value="3",
+            description=f"Количество треков: {len(client_ym.users_likes_tracks())}")
+        )
 
         # Формируем сообщение со списком плейлистов и их ID
         playlists_ym = client_ym.users_playlists_list()
         for playlist_ym in playlists_ym:
             playlist_ym_id = playlist_ym.playlist_id.split(':')[1]
-            options.append(SelectOption(label=str(playlist_ym.title), value=str(playlist_ym_id),
-                                        description=f"Количество треков: {client_ym.users_playlists(int(playlist_ym_id)).track_count}"))
+            options.append(SelectOption(
+                label=str(playlist_ym.title),
+                value=str(playlist_ym_id),
+                description=f"Количество треков: {client_ym.users_playlists(int(playlist_ym_id)).track_count}")
+            )
 
         super().__init__(placeholder='Выберете плейлист...', min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         global data_servers
-        await self.interaction.delete_original_response()
-
+        await interaction.response.defer()
+        await interaction.edit_original_response(content='Подождите', view=None)
         voice_client = interaction.guild.voice_client
 
         data_servers[interaction.guild.name]['playlist'] = []
@@ -775,13 +832,13 @@ class PlaylistSelect(Select):
             elif type == 'radio':
                 data_servers[interaction.guild.name]['radio_check'] = True
                 data_servers[interaction.guild.name]['stream_by_track_check'] = False
-                now = await play_radio(interaction=interaction, station_id=context.id, station_from=context.id.split(':')[0], user_discord=interaction.user, first=True)
+                now = await play_radio(interaction=interaction, station_id=context.id, station_from=context.id.split(':')[0], user_discord=interaction.user, first_track=True)
                 data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, now))
                 data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
         elif self.values[0] == "2":
             data_servers[interaction.guild.name]['radio_check'] = True
             data_servers[interaction.guild.name]['stream_by_track_check'] = False
-            now = await play_radio(interaction=interaction, user_discord=interaction.user, first=True)
+            now = await play_radio(interaction=interaction, user_discord=interaction.user, first_track=True)
             data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, now))
             data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
         else:
@@ -791,6 +848,7 @@ class PlaylistSelect(Select):
             data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
 class onyourwave_setting_button(Button):
     def __init__(self, interaction: discord.Interaction):
+        self.interaction = interaction
         super().__init__(style=ButtonStyle.primary,
                          label="Настроить волну",
                          emoji="⚙️",
@@ -802,14 +860,15 @@ class onyourwave_setting_button(Button):
             view.add_item(onyourwave_setting_diversity(interaction))
             view.add_item(onyourwave_setting_mood_energy(interaction))
             view.add_item(onyourwave_setting_language(interaction))
-            embed = discord.Embed(title='Настройки волны', color=0xf1ca0d,
-                                  description=f'Характер: {settings_onyourwave[str(interaction.user)]["diversity"]}\n'
-                                                f'Настроение: {settings_onyourwave[str(interaction.user)]["mood_energy"]}\n'
-                                                f'Язык: {settings_onyourwave[str(interaction.user)]["language"]}')
-
+            embed = discord.Embed(
+                title='Настройки волны', color=0xf1ca0d,
+                description=f'Характер: {settings_onyourwave[str(interaction.user)]["diversity"]}\n'
+                            f'Настроение: {settings_onyourwave[str(interaction.user)]["mood_energy"]}\n'
+                            f'Язык: {settings_onyourwave[str(interaction.user)]["language"]}'
+            )
             await interaction.response.send_message(view=view, embed=embed, ephemeral=True)
         else:
-            await interaction.response.send_message('Настраивать волну может только тот, кто её запустил', ephemeral=True)
+            await interaction.response.send_message('Настраивать волну может только тот, кто её запустил.', ephemeral=True)
 class onyourwave_setting_diversity(Select):
     def __init__(self, interaction: discord.Interaction):
         self.interaction = interaction
@@ -822,7 +881,7 @@ class onyourwave_setting_diversity(Select):
 
     async def callback(self, interaction: discord.Interaction):
         global settings_onyourwave, data_servers
-
+        await interaction.response.defer()
         settings_onyourwave[str(interaction.user)]['diversity'] = self.values[0]
 
         client_ym = Client(tokens[str(interaction.user)]).init()
@@ -837,12 +896,15 @@ class onyourwave_setting_diversity(Select):
         if voice_client.is_playing() or voice_client.is_paused():
             voice_client.stop()
             data_servers[interaction.guild.name]['task'].cancel()
-        await play_radio(interaction=interaction, user_discord=interaction.user, first=True, new=True)
-        embed = discord.Embed(title='Настройки волны изменены', color=0xf1ca0d,
-                                description=f"Характер: {self.values[0]}\n"
-                                            f"Настроение: {settings_onyourwave[str(interaction.user)]['mood_energy']}\n"
-                                            f"Язык: {settings_onyourwave[str(interaction.user)]['language']}")
-        await self.interaction.edit_original_response(embed=embed)
+        await interaction.edit_original_response(content='Подождите')
+        await play_radio(interaction=interaction, user_discord=interaction.user, first_track=True, new_task=True)
+        embed = discord.Embed(
+            title='Настройки волны изменены', color=0xf1ca0d,
+            description=f"Характер: {self.values[0]}\n"
+                        f"Настроение: {settings_onyourwave[str(interaction.user)]['mood_energy']}\n"
+                        f"Язык: {settings_onyourwave[str(interaction.user)]['language']}"
+        )
+        await interaction.edit_original_response(content='', embed=embed)
 class onyourwave_setting_mood_energy(Select):
     def __init__(self, interaction: discord.Interaction):
         self.interaction = interaction
@@ -856,6 +918,7 @@ class onyourwave_setting_mood_energy(Select):
 
     async def callback(self, interaction: discord.Interaction):
         global settings_onyourwave, data_servers
+        await interaction.response.defer()
 
         settings_onyourwave[str(interaction.user)]['mood_energy'] = self.values[0]
 
@@ -870,14 +933,16 @@ class onyourwave_setting_mood_energy(Select):
         voice_client = interaction.guild.voice_client
         if voice_client.is_playing() or voice_client.is_paused():
             voice_client.stop()
-            data_servers[interaction.guild.name]['task_reserv'].cancel()
             data_servers[interaction.guild.name]['task'].cancel()
-        await play_radio(interaction=interaction, user_discord=interaction.user, first=True, new=True)
-        embed = discord.Embed(title='Настройки волны изменены', color=0xf1ca0d,
-                                description=f"Характер: {settings_onyourwave[str(interaction.user)]['diversity']}\n"
-                                            f"Настроение: {self.values[0]}\n"
-                                            f"Язык: {settings_onyourwave[str(interaction.user)]['language']}")
-        await self.interaction.edit_original_response(embed=embed)
+        await interaction.edit_original_response(content='Подождите')
+        await play_radio(interaction=interaction, user_discord=interaction.user, first_track=True, new_task=True)
+        embed = discord.Embed(
+            title='Настройки волны изменены', color=0xf1ca0d,
+            description=f"Характер: {settings_onyourwave[str(interaction.user)]['diversity']}\n"
+                        f"Настроение: {self.values[0]}\n"
+                        f"Язык: {settings_onyourwave[str(interaction.user)]['language']}"
+        )
+        await self.interaction.edit_original_response(content='', embed=embed)
 class onyourwave_setting_language(Select):
     def __init__(self, interaction: discord.Interaction):
         self.interaction = interaction
@@ -890,6 +955,7 @@ class onyourwave_setting_language(Select):
 
     async def callback(self, interaction: discord.Interaction):
         global settings_onyourwave, data_servers
+        await interaction.response.defer()
 
         settings_onyourwave[str(interaction.user)]['language'] = self.values[0]
 
@@ -904,14 +970,16 @@ class onyourwave_setting_language(Select):
         voice_client = interaction.guild.voice_client
         if voice_client.is_playing() or voice_client.is_paused():
             voice_client.stop()
-            data_servers[interaction.guild.name]['task_reserv'].cancel()
             data_servers[interaction.guild.name]['task'].cancel()
-        await play_radio(interaction=interaction, user_discord=interaction.user, first=True, new=True)
-        embed = discord.Embed(title='Настройки волны изменены', color=0xf1ca0d,
-                              description=f"Характер: {settings_onyourwave[str(interaction.user)]['diversity']}\n"
-                                          f"Настроение: {settings_onyourwave[str(interaction.user)]['mood_energy']}\n"
-                                          f"Язык: {self.values[0]}")
-        await self.interaction.edit_original_response(embed=embed)
+        await interaction.edit_original_response(content='Подождите')
+        await play_radio(interaction=interaction, user_discord=interaction.user, first_track=True, new_task=True)
+        embed = discord.Embed(
+            title='Настройки волны изменены', color=0xf1ca0d,
+            description=f"Характер: {settings_onyourwave[str(interaction.user)]['diversity']}\n"
+                        f"Настроение: {settings_onyourwave[str(interaction.user)]['mood_energy']}\n"
+                        f"Язык: {self.values[0]}"
+        )
+        await interaction.edit_original_response(content='', embed=embed)
 
 
 
@@ -919,21 +987,26 @@ class onyourwave_setting_language(Select):
 Функции для реализации команд
 '''
 @tree.command(name='play', description="🎧Воспроизвести трек. При вызове без аргумента - воспроизвести плейлист из списка")
-@app_commands.describe(url_or_trackname='Вы можете указать: ссылку на трек из Яндекс.Музыки или YouTube, название трека')
-async def start_play(interaction: discord.Interaction, url_or_trackname: str = None):
+@app_commands.rename(url_or_trackname_or_filepath='ссылка_или_название')
+@app_commands.describe(url_or_trackname_or_filepath='Вы можете указать: ссылку на трек из Яндекс.Музыки или YouTube, название трека')
+async def start_play(interaction: discord.Interaction, url_or_trackname_or_filepath: str = None):
     global data_servers, settings_onyourwave
+
+    await interaction.response.defer(ephemeral=True)
+
     if interaction.guild.name not in data_servers:
         data_servers[interaction.guild.name] = data_server.copy()
 
     if str(interaction.user) in tokens:
         client_ym = Client(tokens[str(interaction.user)]).init()
-        settings_onyourwave[str(interaction.user)] = {'mood_energy': client_ym.rotor_station_info('user:onyourwave')[0]['settings2']['mood_energy'],
-                                                      'diversity': client_ym.rotor_station_info('user:onyourwave')[0]['settings2']['diversity'],
-                                                      'language': client_ym.rotor_station_info('user:onyourwave')[0]['settings2']['language']}
+        settings2 = client_ym.rotor_station_info('user:onyourwave')[0]['settings2']
+        settings_onyourwave[str(interaction.user)] = {'mood_energy': settings2['mood_energy'],
+                                                      'diversity': settings2['diversity'],
+                                                      'language': settings2['language']}
 
     author_voice_state = interaction.user.voice
     if author_voice_state is None:
-        await interaction.response.send_message("Подключитесь к голосовому каналу.", ephemeral=True)
+        await interaction.edit_original_response(content="Подключитесь к голосовому каналу.")
         while not author_voice_state:
             await asyncio.sleep(0.1)
             author_voice_state = interaction.user.voice
@@ -953,7 +1026,26 @@ async def start_play(interaction: discord.Interaction, url_or_trackname: str = N
         voice_client.stop()
         data_servers[interaction.guild.name]['task_reserv'].cancel()
         await remove_last_playing_message(interaction)
-    data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, url_or_trackname_or_filepath=url_or_trackname))
+
+    if (not url_or_trackname_or_filepath or \
+            "youtube.com" not in url_or_trackname_or_filepath) and \
+            str(interaction.user) not in tokens:
+        try:
+            await interaction.response.send_message(
+                content=f"Вы не вошли в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize")
+            return
+        except discord.errors.InteractionResponded:
+            await interaction.edit_original_response(
+                content=f"Вы не вошли в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize")
+            return
+
+    data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, url_or_trackname_or_filepath=url_or_trackname_or_filepath))
+    while not voice_client.is_playing():
+        await asyncio.sleep(0.1)
+    try:
+        await interaction.delete_original_response()
+    except:
+        pass
 async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: str = None):
     try:
         global data_servers
@@ -963,13 +1055,6 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
         data_servers[interaction.guild.name]['task_reserv'] = data_servers[interaction.guild.name]['task']
 
         if not url_or_trackname_or_filepath:  # если не передан url
-
-            if str(interaction.user) not in tokens:
-                await interaction.response.send_message(
-                    f"Пользователь {user_discord} не вошёл в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize",
-                    ephemeral=True)
-                return
-
             view = View()
             view.add_item(PlaylistSelect(interaction))
             try:
@@ -979,7 +1064,6 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
             return
 
         while True:
-
             if "youtube.com" in url_or_trackname_or_filepath:
                 if "|" not in url_or_trackname_or_filepath:
                     user_discord = interaction.user
@@ -998,7 +1082,6 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                 audio_file_path = p[1]
 
             elif "music.yandex.ru" in url_or_trackname_or_filepath:
-
                 if "|" not in url_or_trackname_or_filepath:
                     if data_servers[interaction.guild.name]['user_discord_play']:
                         user_discord = data_servers[interaction.guild.name]['user_discord_play']
@@ -1013,12 +1096,6 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                                                      discriminator=name_and_discriminator.split("#")[
                                                          1])  # ищем участника с заданным именем и дискриминатором
                     url_or_trackname_or_filepath = p[1]
-
-                if not str(user_discord) in tokens:
-                    await interaction.response.send_message(
-                        f"Пользователь {user_discord} не вошёл в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize",
-                        ephemeral=True)
-                    return
 
                 p = await play_Yandex_Music_url(interaction, url_or_trackname_or_filepath, user_discord)
                 play_now = p[0]
@@ -1046,12 +1123,6 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                                                          1])  # ищем участника с заданным именем и дискриминатором
                     url_or_trackname_or_filepath = p[1]
 
-                if not str(user_discord) in tokens:
-                    await interaction.response.send_message(
-                        f"Пользователь {str(user_discord)} не вошёл в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize",
-                        ephemeral=True)
-                    return
-
                 p = await play_Yandex_Music_playlist(interaction, url_or_trackname_or_filepath, user_discord)
                 if not p:
                     return
@@ -1066,11 +1137,15 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
             # Проигрываем аудио
             voice_client.play(audio_source)
 
+            duration_track = await milliseconds_to_time(data_servers[interaction.guild.name]['duration'])
+            start_time = 0
+
+            if not birthdays[str(interaction.user)]:
+                await birthday_send(interaction)
+
             if not data_servers[interaction.guild.name]['repeat_flag']:
                 data_servers[interaction.guild.name]['repeat_flag'] = False
-
                 await remove_last_playing_message(interaction)
-
                 view = View(timeout=1200.0)
 
                 view.add_item(prev_button(interaction))
@@ -1085,28 +1160,32 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     view.add_item(onyourwave_setting_button(interaction))
 
                 embed = Embed(title="Сейчас играет", description=play_now, color=0xf1ca0d)
-                if data_servers[interaction.guild.name]['radio_check'] or data_servers[interaction.guild.name]['stream_by_track_check']:
+                embed.add_field(name=f'00:00 / {duration_track}', value='')
+                if data_servers[interaction.guild.name]['radio_check'] or \
+                        data_servers[interaction.guild.name]['stream_by_track_check']:
                     embed.set_footer(text=f"{user_discord} запустил волну", icon_url=user_discord.avatar)
                 else:
                     embed.set_footer(text=f"{user_discord} запустил трек", icon_url=user_discord.avatar)
 
                 if data_servers[interaction.guild.name]['cover_url']:
                     embed.set_thumbnail(url=data_servers[interaction.guild.name]['cover_url'])
-
                 message = await interaction.channel.send(embed=embed, view=view)
-
-                if not birthdays[str(interaction.user)]:
-                    await birthday_send(interaction)
-
                 data_servers[interaction.guild.name]['message_check'] = message
 
             while voice_client.is_playing() or voice_client.is_paused():
                 if voice_client.is_playing():
+                    start_time_inaccuracy = datetime.datetime.now()
+                    start_time += 1000
+                    time_now = await milliseconds_to_time(start_time)
+                    embed.clear_fields()
+                    embed.add_field(name=f'{time_now} / {duration_track}', value='')
+                    await data_servers[interaction.guild.name]['message_check'].edit(embed=embed)
                     data_servers[interaction.guild.name]['last_activity_time'] = datetime.datetime.now()
-                await asyncio.sleep(0.1)
+                    end_time_inaccuracy = datetime.datetime.now()
+                await asyncio.sleep(1 - (end_time_inaccuracy - start_time_inaccuracy).microseconds / 1000000)
 
             if data_servers[interaction.guild.name]['repeat_flag']:
-                url_or_trackname_or_filepath = data_servers[interaction.guild.name]['queue_repeat']
+                continue
 
             elif data_servers[interaction.guild.name]['radio_check'] or data_servers[interaction.guild.name]['stream_by_track_check']:
                 url_or_trackname_or_filepath = await play_radio(interaction=interaction, user_discord=user_discord)
@@ -1123,11 +1202,11 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
     except Exception as e:
         await interaction.channel.send(f"Произошла ошибка при проигрывании музыки: {e}.")
 
-@start_play.autocomplete('url_or_trackname')
+@start_play.autocomplete('url_or_trackname_or_filepath')
 async def search_yandex_music(interaction: discord.Interaction, search: str):
     global tokens
     user_discord = interaction.user
-    url_or_trackname = []
+    url_or_trackname_or_filepath = []
     if ("youtube.com" or "music.yandex.ru") not in search:
         if str(user_discord) in tokens:
             client_ym = Client(tokens[str(user_discord)]).init()
@@ -1137,8 +1216,8 @@ async def search_yandex_music(interaction: discord.Interaction, search: str):
                     artists = ''
                     if item.artists:
                         artists = ' - ' + ', '.join(artist.name for artist in item.artists)
-                    url_or_trackname.append(item.title + artists)
-    return [app_commands.Choice(name=item, value=item) for item in url_or_trackname ]
+                    url_or_trackname_or_filepath.append(item.title + artists)
+    return [app_commands.Choice(name=item, value=item) for item in url_or_trackname_or_filepath ]
 
 @tree.command(name='authorize', description="🔑Авторизация для использования сервиса Яндекс.Музыка")
 @app_commands.describe(token='Вам нужно указать свой токен от аккаунта Яндекс.Музыки')
