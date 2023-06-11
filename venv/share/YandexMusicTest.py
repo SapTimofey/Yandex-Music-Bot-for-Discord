@@ -106,53 +106,44 @@ async def remove_last_playing_message(interaction: discord.Interaction):
                  message.content.startswith('Треки в очереди') or
                  message.content.startswith('Не удалось') or
                  message.content.startswith('Произошла ошибка') or
-                 message.content.startswith('Не удалось') or
-                 (isinstance(message.embeds, list) and len(message.embeds) > 0)):
-            try:
-                await message.delete()
-            except Exception:
-                pass
-        elif message.content.startswith('!play'):
+                 len(message.embeds) > 0):
             try:
                 await message.delete()
             except Exception:
                 pass
 async def check_voice_clients(interaction: discord.Interaction):
     global data_servers, data_servers_log
-
     voice_client = interaction.guild.voice_client
-
     while True:
         # Проверка наличия пользователей в голосовом канале
         if voice_client and not any(member != client.user for member in voice_client.channel.members):
             await disconnect(interaction)
-            return
-        await asyncio.sleep(1)
+            break
+        await asyncio.sleep(0.1)
 async def check_inactivity(interaction: discord.Interaction):
     global data_servers
-
     voice_client = interaction.guild.voice_client
     while True:
         # проверяем, прошло ли более 5 минут с момента последней активности бота
-        if datetime.datetime.now() - data_servers[interaction.guild.name]['last_activity_time'] > datetime.timedelta(
-                minutes=5) and not voice_client.is_playing() and voice_client:
+        if datetime.datetime.now() - data_servers[interaction.guild.name]['last_activity_time'] > \
+                datetime.timedelta(minutes=5) and not voice_client.is_playing() and voice_client:
             await disconnect(interaction)
-            return
+            break
         await asyncio.sleep(1)
 async def disconnect(interaction: discord.Interaction):
     global data_servers
     voice_client = interaction.guild.voice_client
     try:
-        if voice_client.is_connected():
-            if voice_client.is_playing():
-                voice_client.stop()
-            await voice_client.disconnect()
-
-            data_servers[interaction.guild.name]['task'].cancel()
-            data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
-            data_servers[interaction.guild.name]['task_check_voice_clients'].cancel()
-            data_servers[interaction.guild.name] = data_server.copy()
-            await remove_last_playing_message(interaction)
+        await remove_last_playing_message(interaction)
+        try:
+            await interaction.delete_original_response()
+        except Exception:
+            pass
+        data_servers[interaction.guild.name]['task'].cancel()
+        await voice_client.disconnect()
+        data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
+        data_servers[interaction.guild.name]['task_check_voice_clients'].cancel()
+        data_servers[interaction.guild.name] = data_server.copy()
     except Exception:
         pass
 async def check_audio_file(path):
@@ -1030,11 +1021,6 @@ async def start_play(interaction: discord.Interaction, url_or_trackname_or_filep
     if (not url_or_trackname_or_filepath or \
             "youtube.com" not in url_or_trackname_or_filepath) and \
             str(interaction.user) not in tokens:
-        try:
-            await interaction.response.send_message(
-                content=f"Вы не вошли в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize")
-            return
-        except discord.errors.InteractionResponded:
             await interaction.edit_original_response(
                 content=f"Вы не вошли в аккаунт Яндекс.Музыки. Для входа воспользуйтесь командой /authorize")
             return
@@ -1057,10 +1043,7 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
         if not url_or_trackname_or_filepath:  # если не передан url
             view = View()
             view.add_item(PlaylistSelect(interaction))
-            try:
-                await interaction.response.send_message(view=view, ephemeral=True)
-            except discord.errors.InteractionResponded:
-                await interaction.edit_original_response(content='', view=view)
+            await interaction.edit_original_response(content='', view=view)
             return
 
         while True:
@@ -1274,16 +1257,25 @@ async def autocomplete_log(interaction: discord.Interaction, search: str):
 
 @tree.command(name='help', description="❓Справка по командам")
 async def commands(interaction: discord.Interaction):
-    command = {'/play': 'Имеет необязательный аргумент \'url_or_trackname\'\n\n'
+    global data_servers
+    if interaction.guild.name not in data_servers:
+        data_servers[interaction.guild.name] = data_server.copy()
+    command = {'/play': 'Имеет необязательный аргумент \'ссылка_или_название\'\n\n'
                         'При вызове команды без аргумента - предложит выбрать плейлист из списка и запустит его\n\n'
                         'В аргумент можно передать:\n'
                         '1. Ссылку на видео YouTube\n'
                         '2. Ссылку на трек Яндекс.Музыки\n'
-                        '3. Название трека (Для лучшего результата можно узазать название вместе с исполнителями)\n',
+                        '3. Название трека (При вводе можно выбрать из выпадающего списка)\n',
                '/authorize': 'Имеет обязательный аргумент \'token\'\n\n'
                              'В аргумент нужно передать Ваш токен от аккаунта Яндекс.Музыки\n\n'
                              'Без авторизации Вы не сможете пользоваться Яндекс.Музыкой\n\n'
-                             'С инструкцией по получению токена можно ознакимиться здесь:\nhttps://github.com/MarshalX/yandex-music-api/discussions/513'
+                             'С инструкцией по получению токена можно ознакимиться здесь:\nhttps://github.com/MarshalX/yandex-music-api/discussions/513\n\n'
+                             'Также можно воспользоваться программой, через которую можно войти с помощью Авторизации Яндекса\n\n'
+                             'Скачать можно здесь: https://disk.yandex.ru/d/zBhcTwiut1kxJw\n\n'
+                             'Примечания для программы:\n'
+                             '- Пока доступна версия только для ОС Windows\n'
+                             '- Для работы программы необходимо наличие Goole Chrome на вашем устройстве\n'
+                             '- Версия программы не финальная и будет дорабатываться '
                }
 
     class next_command_button(Button):
@@ -1314,13 +1306,13 @@ async def commands(interaction: discord.Interaction):
             await interaction.response.edit_message(
                 content=f'Команда {data_servers[interaction.guild.name]["command_now"]+1} из {len(command)}',
                 embed=Embed(title='/play', description=command['/play'], color=0xf1ca0d),
-                view=self.view)
+                view=self.view
+            )
 
     view = View(timeout=1200.0)
 
     view.add_item(prev_command_button(interaction))
     view.add_item(next_command_button(interaction))
-
 
     embed = Embed(title='/play', description=command['/play'], color=0xf1ca0d)
 
