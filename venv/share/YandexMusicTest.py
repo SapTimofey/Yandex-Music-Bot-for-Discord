@@ -332,7 +332,7 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
                 index_track = int(playlist_ym[1])
             except IndexError:
                 if not index_track:
-                    index_track = data_servers[interaction.guild.name]['playlist'][0].split(',')[1]
+                    index_track = int(data_servers[interaction.guild.name]['playlist'][0].split(',')[1])
                 track_short = playlist_new.tracks[index_track - 1]
 
             track = client_ym.tracks(track_short.track_id)[0]
@@ -681,6 +681,7 @@ class lyrics_button(Button):
     async def callback(self, interaction: discord.Interaction):
         global data_servers
         data_servers[interaction.guild.name]['can_edit_message'] = False
+        await asyncio.sleep(1)
         if self.style == ButtonStyle.success:
             self.style = ButtonStyle.primary  # изменяем стиль кнопки на primary
             async for message in interaction.channel.history():
@@ -702,10 +703,9 @@ class lyrics_button(Button):
         while True:
             try:
                 await interaction.response.edit_message(view=self.view)  # обновляем стиль кнопки
+                break
             except Exception:
                 await asyncio.sleep(0.1)
-            else:
-                break
         data_servers[interaction.guild.name]['can_edit_message'] = True
 class track_url_button(Button):
     def __init__(self, interaction: discord.Interaction):
@@ -1676,7 +1676,7 @@ async def about_me(interaction: discord.Interaction):
                         'https://github.com/SapTimofey/YandexMusic\n\n'
                         'С открытым кодом библиотеки yandex_music можно ознакомиться тут:\n'
                         'https://github.com/MarshalX/yandex-music-api\n\n'
-                        'Версия бота: 0.7.6',
+                        'Версия бота: 0.8.1',
             color=0xf1ca0d
         ),
         ephemeral=True
