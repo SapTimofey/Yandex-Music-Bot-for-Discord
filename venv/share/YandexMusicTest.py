@@ -53,6 +53,9 @@ user = os.environ.get('USERNAME')
 output_path = f'C:\\Users\\{user}\\Music'  # Путь к папке, где будет сохранен аудиофайл
 data_server = {
     'playlist': [],
+    'album': False,
+    'album_list': [],
+    'album_list_page_index': 0,
     'track_names_from_the_playlist': [],
     'track_list_page_index': 0,
     'mood_and_genre_page_index': 0,
@@ -145,14 +148,16 @@ async def check_inactivity(interaction: discord.Interaction):
 async def disconnect(interaction: discord.Interaction):
     global data_servers
     voice_client = interaction.guild.voice_client
+    try:
+        voice_client.stop()
+        data_servers[interaction.guild.name]['task'].cancel()
+        await remove_last_playing_message(interaction)
 
-    voice_client.stop()
-    data_servers[interaction.guild.name]['task'].cancel()
-    await remove_last_playing_message(interaction)
-
-    await voice_client.disconnect()
-    data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
-    data_servers[interaction.guild.name] = copy.deepcopy(data_server)
+        await voice_client.disconnect()
+        data_servers[interaction.guild.name]['task_check_inactivity'].cancel()
+        data_servers[interaction.guild.name] = copy.deepcopy(data_server)
+    except Exception:
+        pass
 async def check_audio_file(path):
     audio = AudioSegment.from_file(path)
     bitrate = audio.frame_rate * audio.channels * audio.sample_width * 8
@@ -165,6 +170,8 @@ async def play_YouTube(interaction: discord.Interaction, url_or_trackname_or_fil
     error_count = 0
     while error_count < 3:
         try:
+            data_servers[interaction.guild.name]['track_url'] = url_or_trackname_or_filepath
+
             # Извлеките идентификатор видео из ссылки
             video_id = re.findall(r'v=(\w+)', url_or_trackname_or_filepath)[0]
 
@@ -213,13 +220,29 @@ async def play_YouTube(interaction: discord.Interaction, url_or_trackname_or_fil
                 await asyncio.sleep(1)
                 error_count += 1
             else:
+                try:
+                    await interaction.delete_original_response()
+                except:
+                    pass
                 await interaction.channel.send(f"Не удалось устранить ошибку {e}")
                 return False
 async def play_Yandex_Music_url(interaction: discord.Interaction, url_or_trackname_or_filepath):
     global data_servers
-    track_id = url_or_trackname_or_filepath.rsplit('/', maxsplit=1)[1]
-    if '?' in track_id:
-        track_id = track_id.split('?')[0]
+    if 'track' in url_or_trackname_or_filepath:
+        track_id = url_or_trackname_or_filepath.rsplit('/', maxsplit=1)[1]
+        if '?' in track_id:
+            track_id = track_id.split('?')[0]
+    else:
+        data_servers[interaction.guild.name]['task'].cancel()
+        data_servers[interaction.guild.name]['album'] = True
+        album_id = url_or_trackname_or_filepath.rsplit('/', maxsplit=1)[1]
+        data_servers[interaction.guild.name]['task'] = \
+            asyncio.create_task(play(
+                interaction=interaction,
+                url_or_trackname_or_filepath=album_id
+            ))
+        return
+
     error_count = 0
     while error_count < 3:
         try:
@@ -266,6 +289,10 @@ async def play_Yandex_Music_url(interaction: discord.Interaction, url_or_trackna
                 await asyncio.sleep(1)
                 error_count += 1
             else:
+                try:
+                    await interaction.delete_original_response()
+                except:
+                    pass
                 await interaction.channel.send(f"Не удалось устранить ошибку {e}")
                 return False
 async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_trackname_or_filepath):
@@ -278,24 +305,36 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
     while error_count < 3:
         try:
             client_ym = Client(tokens[str(data_servers[interaction.guild.name]['user_discord_play'])]).init()
-            if playlist_id == "3":
-                playlist_new = client_ym.users_likes_tracks()
-            else:
-                try:
-                    playlist_new = client_ym.users_playlists(playlist_id)
-                except yandex_music.exceptions.NotFoundError:
-                    play_now = await send_search_request(interaction, url_or_trackname_or_filepath)
-                    if not play_now:
-                        return False
+            if not data_servers[interaction.guild.name]['album']:
+                if playlist_id == "3":
+                    playlist_new = client_ym.users_likes_tracks().tracks
+                    playlist_title = "Мне нравится"
+                else:
+                    try:
+                        playlist_new = client_ym.users_playlists(playlist_id).tracks
+                        playlist_title = client_ym.users_playlists(playlist_id).title
+                    except yandex_music.exceptions.NotFoundError:
+                        play_now = await send_search_request(interaction, url_or_trackname_or_filepath)
+                        if not play_now:
+                            return False
 
-                    return play_now
+                        return play_now
+            else:
+                playlist_new = []
+                playlist_album = client_ym.albums_with_tracks(playlist_id).volumes
+                if len(playlist_album) > 1:
+                    for item in playlist_album:
+                        playlist_new += item
+                else:
+                    playlist_new = playlist_album[0]
+                album_title = client_ym.albums_with_tracks(playlist_id).title
 
             if not data_servers[interaction.guild.name]['playlist']:
                 j = 0
                 list = []
                 service_index = 0
-                for i in range(len(playlist_new.tracks)):
-                    track_short = playlist_new.tracks[i]
+                for i in range(len(playlist_new)):
+                    track_short = playlist_new[i]
                     track = client_ym.tracks(track_short.track_id)[0]
                     if track.available:
                         if index_track is None:
@@ -328,12 +367,12 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
                     data_servers[interaction.guild.name]['track_names_from_the_playlist'].append(list)
 
             try:
-                track_short = playlist_new.tracks[int(playlist_ym[1]) - 1]
+                track_short = playlist_new[int(playlist_ym[1]) - 1]
                 index_track = int(playlist_ym[1])
             except IndexError:
                 if not index_track:
                     index_track = int(data_servers[interaction.guild.name]['playlist'][0].split(',')[1])
-                track_short = playlist_new.tracks[index_track - 1]
+                track_short = playlist_new[index_track - 1]
 
             track = client_ym.tracks(track_short.track_id)[0]
 
@@ -345,13 +384,16 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
             else:
                 artist_names = [artist.name for artist in artists]  # получаем список имен артистов
                 artist_all = ", ".join(artist_names)  # объединяем их через запятую
-            if playlist_id == "3":
-                play_now = "\nПлейлист: Мне нравится"
+            if not data_servers[interaction.guild.name]['album']:
+                if playlist_id == "3":
+                    play_now = "\nПлейлист: Мне нравится"
+                else:
+                    play_now = f"\nПлейлист: {playlist_title}"
             else:
-                play_now = f"\nПлейлист: {playlist_new.title}"
+                play_now = f"\nАльбом: {album_title}"
             play_now += f"\nТрек: {track.title}" + \
                         f"\nИсполнители: {artist_all}" + \
-                        f"\nНомер трека: {index_track} / {len(playlist_new.tracks)}"
+                        f"\nНомер трека: {index_track} / {len(playlist_new)}"
 
             track.download(f'{output_path}\\{data_servers[interaction.guild.name]["user_discord_play"]}.mp3')
 
@@ -384,6 +426,10 @@ async def play_Yandex_Music_playlist(interaction: discord.Interaction, url_or_tr
                 await asyncio.sleep(1)
                 error_count += 1
             else:
+                try:
+                    await interaction.delete_original_response()
+                except:
+                    pass
                 await interaction.channel.send(f"Не удалось устранить ошибку {e}")
                 return False
 async def send_search_request(interaction: discord.Interaction, query):
@@ -446,6 +492,10 @@ async def send_search_request(interaction: discord.Interaction, query):
                 await asyncio.sleep(1)
                 error_count += 1
             else:
+                try:
+                    await interaction.delete_original_response()
+                except:
+                    pass
                 await interaction.channel.send(f"Не удалось устранить ошибку {e}")
                 return False
 async def play_radio(interaction: discord.Interaction, station_id: str, station_from: str, first_track: bool = False, new_task: bool=False):
@@ -480,6 +530,10 @@ async def play_radio(interaction: discord.Interaction, station_id: str, station_
                 await asyncio.sleep(1)
                 error_count += 1
             else:
+                try:
+                    await interaction.delete_original_response()
+                except:
+                    pass
                 await interaction.channel.send(f"Не удалось устранить ошибку {e}")
                 return False
 
@@ -727,12 +781,16 @@ class track_url_button(Button):
             )
 class stream_by_track_button(Button):
     def __init__(self, interaction: discord.Interaction):
+        if not data_servers[interaction.guild.name]['track_url'] or 'youtube.com' in data_servers[interaction.guild.name]['track_url']:
+            disabled = True
+        else:
+            disabled = False
         super().__init__(
             style=ButtonStyle.primary,
             label="Моя волна по треку",
             emoji="💫",
             row=2,
-            disabled=not data_servers[interaction.guild.name]['track_url']
+            disabled=disabled
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -741,6 +799,7 @@ class stream_by_track_button(Button):
         track  = client_ym.tracks(data_servers[interaction.guild.name]['track_id_play_now'])[0]
 
         data_servers[interaction.guild.name]['radio_check'] = False
+        data_servers[interaction.guild.name]['album'] = False
         data_servers[interaction.guild.name]['stream_by_track_check'] = {
             "name": 'Моя волна по треку ' + track.title,
             "station": 'track:' + data_servers[interaction.guild.name]['track_id_play_now'],
@@ -771,29 +830,37 @@ class PlaylistSelect(Select):
             value="1",
             description="Запустить трек, на котором вы остановились",
             emoji='🪄'
-        )
-        )
+        ))
         options.append(SelectOption(
             label="Радио по жанру",
             value="4",
             description="Радио",
             emoji='📻'
-        )
-        )
+        ))
         options.append(SelectOption(
             label="Моя волна",
             value="2",
             description="Радио",
             emoji='✨'
-        )
-        )
+        ))
+        checking_for_albums = False
+        for item in client_ym.users_likes_albums():
+            if item.album.type not in ['podcast', 'audiobook']:
+                checking_for_albums = True
+                break
+        if checking_for_albums:
+            options.append(SelectOption(
+                label="Альбомы",
+                value="5",
+                description="Ваши любимые альбомы",
+                emoji='💿'
+            ))
         options.append(SelectOption(
             label="Мне нравится",
             value="3",
             description=f"Количество треков: {len(client_ym.users_likes_tracks())}",
             emoji='❤️'
-        )
-        )
+        ))
 
         playlists_ym = client_ym.users_playlists_list()
         for playlist_ym in playlists_ym:
@@ -802,9 +869,8 @@ class PlaylistSelect(Select):
                 label=str(playlist_ym.title),
                 value=str(playlist_ym_id),
                 description=f"Количество треков: {client_ym.users_playlists(int(playlist_ym_id)).track_count}",
-                emoji='💿'
-            )
-            )
+                emoji='🎶'
+            ))
 
         super().__init__(placeholder='Что послушаем?...', min_values=1, max_values=1, options=options)
 
@@ -812,136 +878,192 @@ class PlaylistSelect(Select):
         global data_servers
         await interaction.response.defer()
         client_ym = Client(tokens[str(data_servers[interaction.guild.name]['user_discord_play'])]).init()
-
-        if self.values[0] == "1":
-            await interaction.edit_original_response(
-                content='Загрузка трека, на котором Вы остановились. Подождите',
-                view=None
-            )
-        elif self.values[0] == "2":
-            await interaction.edit_original_response(
-                content='Загрузка радио "Моя волна". Подождите',
-                view=None
-            )
-        elif self.values[0] == "3":
-            await interaction.edit_original_response(
-                content='Загрузка плейлиста "Мне нравится". Подождите',
-                view=None
-            )
-        elif self.values[0] == "4":
-            await interaction.edit_original_response(
-                content='Загрузка жанров. Подождите',
-                view=None
-            )
-        else:
-            await interaction.edit_original_response(
-                content=f'Загрузка плейлиста "{client_ym.users_playlists(self.values[0]).title}". Подождите',
-                view=None
-            )
-
-        if self.values[0] == "1":
-            context = client_ym.queues_list()[0].context
-            type = context.type
-            if type == 'playlist':
-                data_servers[interaction.guild.name]['radio_check'] = False
-                data_servers[interaction.guild.name]['stream_by_track_check'] = False
-                data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(
-                    interaction=interaction,
-                    url_or_trackname_or_filepath=f"{context.id.split(':')[1]},{int(client_ym.queue(client_ym.queues_list()[0].id).current_index) + 1}"
-                ))
-                data_servers[interaction.guild.name]['index_play_now'] = client_ym.queue(client_ym.queues_list()[0].id).current_index
-            elif type == 'my_music':
-                data_servers[interaction.guild.name]['radio_check'] = False
-                data_servers[interaction.guild.name]['stream_by_track_check'] = False
-                find = False
-                for playlist in client_ym.users_playlists_list():
-                    playlist_id = playlist.playlist_id.split(':')[1]
-                    if str(client_ym.users_playlists(playlist_id).tracks[0].id) == str(client_ym.queue(client_ym.queues_list()[0].id).tracks[0].track_id):
-                        find = True
-                        break
-                if not find:
-                    if str(client_ym.users_likes_tracks()[0].id) == str(client_ym.queue(client_ym.queues_list()[0].id).tracks[0].track_id):
-                        playlist_id = 3
-                data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, f"{playlist_id},{int(client_ym.queue(client_ym.queues_list()[0].id).current_index) + 1}"))
-                data_servers[interaction.guild.name]['index_play_now'] = int(client_ym.queue(client_ym.queues_list()[0].id).current_index)
-            elif type == 'radio':
-                check_mood_and_genre = False
-                for item in client_ym.rotor_stations_list():
-                    if context.description == item.station.name:
-                        check_mood_and_genre = True
-                        data_servers[interaction.guild.name]['stream_by_track_check'] = False
-                        data_servers[interaction.guild.name]['radio_check'] = {
-                            "name": context.description,
-                            "station": context.id,
-                            "station_from": context.id.split(':')[0]
-                        }
-                        break
-                if not check_mood_and_genre:
-                    data_servers[interaction.guild.name]['radio_check'] = False
-                    data_servers[interaction.guild.name]['stream_by_track_check'] = {
-                        "name": context.description,
-                        "station": context.id,
-                        "station_from": context.id.split(':')[0]
+        error_count = 0
+        while error_count < 3:
+            try:
+                if self.values[0] == "1":
+                    await interaction.edit_original_response(
+                        content='Загрузка трека, на котором Вы остановились. Подождите',
+                        view=None
+                    )
+                    context = client_ym.queues_list()[0].context
+                    type = context.type
+                    if type == 'playlist':
+                        data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(
+                            interaction=interaction,
+                            url_or_trackname_or_filepath=f"{context.id.split(':')[1]},{int(client_ym.queue(client_ym.queues_list()[0].id).current_index) + 1}"
+                        ))
+                        data_servers[interaction.guild.name]['index_play_now'] = \
+                            client_ym.queue(client_ym.queues_list()[0].id).current_index
+                    elif type == 'my_music':
+                        find = False
+                        for playlist in client_ym.users_playlists_list():
+                            playlist_id = playlist.playlist_id.split(':')[1]
+                            if str(client_ym.users_playlists(playlist_id).tracks[0].id) == str(client_ym.queue(client_ym.queues_list()[0].id).tracks[0].track_id):
+                                find = True
+                                break
+                        if not find:
+                            if str(client_ym.users_likes_tracks()[0].id) == str(client_ym.queue(client_ym.queues_list()[0].id).tracks[0].track_id):
+                                playlist_id = 3
+                        data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, f"{playlist_id},{int(client_ym.queue(client_ym.queues_list()[0].id).current_index) + 1}"))
+                        data_servers[interaction.guild.name]['index_play_now'] = int(client_ym.queue(client_ym.queues_list()[0].id).current_index)
+                    elif type == 'radio':
+                        check_mood_and_genre = False
+                        for item in client_ym.rotor_stations_list():
+                            if context.description == item.station.name:
+                                check_mood_and_genre = True
+                                data_servers[interaction.guild.name]['radio_check'] = {
+                                    "name": context.description,
+                                    "station": context.id,
+                                    "station_from": context.id.split(':')[0]
+                                }
+                                break
+                        if not check_mood_and_genre:
+                            data_servers[interaction.guild.name]['stream_by_track_check'] = {
+                                "name": context.description,
+                                "station": context.id,
+                                "station_from": context.id.split(':')[0]
+                            }
+                        await play_radio(
+                            interaction=interaction,
+                            station_id=context.id,
+                            station_from=context.id.split(':')[0],
+                            first_track=True,
+                            new_task=True
+                        )
+                    elif type == 'album':
+                        data_servers[interaction.guild.name]['album'] = True
+                        data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(
+                            interaction=interaction,
+                            url_or_trackname_or_filepath=f"{context.id},{int(client_ym.queue(client_ym.queues_list()[0].id).current_index) + 1}"
+                        ))
+                        data_servers[interaction.guild.name]['index_play_now'] = \
+                            client_ym.queue(client_ym.queues_list()[0].id).current_index
+                    break
+                elif self.values[0] == "2":
+                    await interaction.edit_original_response(
+                        content='Загрузка радио "Моя волна". Подождите',
+                        view=None
+                    )
+                    data_servers[interaction.guild.name]['radio_check'] = {
+                        "name": "Моя волна",
+                        "station": "user:onyourwave",
+                        "station_from": 'user-onyourwave'
                     }
-                await play_radio(
-                    interaction=interaction,
-                    station_id=context.id,
-                    station_from=context.id.split(':')[0],
-                    first_track=True,
-                    new_task=True
-                )
-        elif self.values[0] == "2":
-            data_servers[interaction.guild.name]['radio_check'] = {
-                "name": "Моя волна",
-                "station": "user:onyourwave",
-                "station_from": 'user-onyourwave'
-            }
-            data_servers[interaction.guild.name]['stream_by_track_check'] = False
-            await play_radio(
-                interaction=interaction,
-                station_id=data_servers[interaction.guild.name]["radio_check"]["station"],
-                station_from=data_servers[interaction.guild.name]["radio_check"]["station_from"],
-                first_track=True,
-                new_task=True
-            )
-        elif self.values[0] == "4":
-            j = 0
-            list = []
-            for item in client_ym.rotor_stations_list():
-                if j < 24:
-                    list.append(
-                        f"{item.station.id.type}:{item.station.id.tag},"
-                        f"{item.station.id_for_from},"
-                        f"{item.station.name}"
+                    await play_radio(
+                        interaction=interaction,
+                        station_id=data_servers[interaction.guild.name]["radio_check"]["station"],
+                        station_from=data_servers[interaction.guild.name]["radio_check"]["station_from"],
+                        first_track=True,
+                        new_task=True
                     )
-                    j += 1
-                else:
-                    list.append(
-                        f"{item.station.id.type}:{item.station.id.tag},"
-                        f"{item.station.id_for_from},"
-                        f"{item.station.name}"
+                    break
+                elif self.values[0] == "4":
+                    await interaction.edit_original_response(
+                        content='Загрузка жанров. Подождите',
+                        view=None
                     )
-                    data_servers[interaction.guild.name]['mood_and_genre'].append(list)
                     j = 0
                     list = []
-            if j > 0:
-                data_servers[interaction.guild.name]['mood_and_genre'].append(list)
+                    for item in client_ym.rotor_stations_list():
+                        if j < 24:
+                            list.append(
+                                f"{item.station.id.type}:{item.station.id.tag},"
+                                f"{item.station.id_for_from},"
+                                f"{item.station.name}"
+                            )
+                            j += 1
+                        else:
+                            list.append(
+                                f"{item.station.id.type}:{item.station.id.tag},"
+                                f"{item.station.id_for_from},"
+                                f"{item.station.name}"
+                            )
+                            data_servers[interaction.guild.name]['mood_and_genre'].append(list)
+                            j = 0
+                            list = []
+                    if j > 0:
+                        data_servers[interaction.guild.name]['mood_and_genre'].append(list)
 
-            self.view.clear_items()
+                    self.view.clear_items()
 
-            self.view.add_item(mood_and_genre_select(interaction))
-            self.view.add_item(mood_and_genre_prev_page(interaction))
-            self.view.add_item(mood_and_genre_next_page(interaction))
+                    self.view.add_item(mood_and_genre_select(interaction))
+                    self.view.add_item(mood_and_genre_prev_page(interaction))
+                    self.view.add_item(mood_and_genre_next_page(interaction))
 
-            await interaction.edit_original_response(
-                content=f"Страница {data_servers[interaction.guild.name]['mood_and_genre_page_index'] + 1} из "
-                        f"{len(data_servers[interaction.guild.name]['mood_and_genre'])}",
-                view=self.view
-            )
-        else:
-            data_servers[interaction.guild.name]['radio_check'] = False
-            data_servers[interaction.guild.name]['stream_by_track_check'] = False
-            data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, self.values[0]))
+                    await interaction.edit_original_response(
+                        content=f"Страница {data_servers[interaction.guild.name]['mood_and_genre_page_index'] + 1} из "
+                                f"{len(data_servers[interaction.guild.name]['mood_and_genre'])}",
+                        view=self.view
+                    )
+                    break
+                elif self.values[0] == "5":
+                    await interaction.edit_original_response(
+                        content='Загрузка альбомов. Подождите',
+                        view=None
+                    )
+                    data_servers[interaction.guild.name]['album'] = True
+                    j = 0
+                    list = []
+                    for item in client_ym.users_likes_albums():
+                        if item.album.type not in ['podcast', 'audiobook']:
+                            if j < 24:
+                                list.append(
+                                    f"{item.album.id},"
+                                    f"{item.album.title},"
+                                    f"{item.album.track_count},"
+                                    f"{item.album.type}"
+                                )
+                                j += 1
+                            else:
+                                list.append(
+                                    f"{item.album.id},"
+                                    f"{item.album.title},"
+                                    f"{item.album.track_count},"
+                                    f"{item.album.type}"
+                                )
+                                data_servers[interaction.guild.name]['album_list'].append(list)
+                                j = 0
+                                list = []
+                    if j > 0:
+                        data_servers[interaction.guild.name]['album_list'].append(list)
+
+                    self.view.clear_items()
+
+                    self.view.add_item(selecting_an_album_from_the_list(interaction))
+                    self.view.add_item(album_list_prev_page(interaction))
+                    self.view.add_item(album_list_next_page(interaction))
+
+                    await interaction.edit_original_response(
+                        content=f"Страница {data_servers[interaction.guild.name]['album_list_page_index'] + 1} из "
+                                f"{len(data_servers[interaction.guild.name]['album_list'])}",
+                        view=self.view
+                    )
+                    break
+                else:
+                    if self.values[0] == "3":
+                        await interaction.edit_original_response(
+                            content='Загрузка плейлиста "Мне нравится". Подождите',
+                            view=None
+                        )
+                    else:
+                        await interaction.edit_original_response(
+                            content=f'Загрузка плейлиста "{client_ym.users_playlists(self.values[0]).title}". Подождите',
+                            view=None
+                        )
+                    data_servers[interaction.guild.name]['task'] = asyncio.create_task(play(interaction, self.values[0]))
+                    break
+            except Exception:
+                if error_count < 2:
+                    await interaction.channel.send(f'Произошла ошибка: {e}. Подождите')
+                    await asyncio.sleep(1)
+                    error_count += 1
+                else:
+                    try:
+                        await interaction.delete_original_response()
+                    except:
+                        pass
+                    await interaction.channel.send(f"Не удалось устранить ошибку {e}")
 class onyourwave_setting_button(Button):
     def __init__(self):
         super().__init__(
@@ -1010,8 +1132,7 @@ class onyourwave_setting_diversity(Select):
         except Exception as e:
             await interaction.edit_original_response(
                 content=f'Произошла ошибка {e}.\n'
-                        f'Попробуйте ещё раз.',
-                embed=embed
+                        f'Попробуйте ещё раз.'
             )
 class onyourwave_setting_mood_energy(Select):
     def __init__(self):
@@ -1060,8 +1181,7 @@ class onyourwave_setting_mood_energy(Select):
         except Exception as e:
             await interaction.edit_original_response(
                 content=f'Произошла ошибка {e}.\n'
-                        f'Попробуйте ещё раз.',
-                embed=embed
+                        f'Попробуйте ещё раз.'
             )
 class onyourwave_setting_language(Select):
     def __init__(self):
@@ -1109,8 +1229,7 @@ class onyourwave_setting_language(Select):
         except Exception as e:
             await interaction.edit_original_response(
                 content=f'Произошла ошибка {e}.\n'
-                        f'Попробуйте ещё раз.',
-                embed=embed
+                        f'Попробуйте ещё раз.'
             )
 class selecting_a_track_from_a_playlist_button(Button):
     def __init__(self):
@@ -1287,6 +1406,87 @@ class mood_and_genre_prev_page(Button):
                     f"{len(data_servers[interaction.guild.name]['mood_and_genre'])}",
             view=self.view
         )
+class selecting_an_album_from_the_list(Select):
+    def __init__(self, interaction: discord.Interaction):
+        self.interaction = interaction
+        options = []
+        interval = data_servers[interaction.guild.name]['album_list'][data_servers[interaction.guild.name]['album_list_page_index']]
+        for item in interval:
+            if item.split(',')[3] == 'single':
+                options.append(SelectOption(
+                    label=item.split(',')[1],
+                    value=item,
+                    description=f"Количество треков: {item.split(',')[2]} - сингл"
+                ))
+            else:
+                options.append(SelectOption(
+                    label=item.split(',')[1],
+                    value=item,
+                    description=f"Количество треков: {item.split(',')[2]}"
+                ))
+
+        super().__init__(placeholder="Выберете альбом...", min_values=1, max_values=1, options=options, row=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        global data_servers
+        await interaction.response.defer()
+        await self.interaction.edit_original_response(
+            content=f'Загрузка альбома "{self.values[0].split(",")[1]}". Подождите\n',
+            view=None
+        )
+        data_servers[interaction.guild.name]['album_list'] = []
+        data_servers[interaction.guild.name]['task'] = \
+            asyncio.create_task(play(
+                interaction=interaction,
+                url_or_trackname_or_filepath=self.values[0].split(',')[0]
+            ))
+class album_list_next_page(Button):
+    def __init__(self, interaction: discord.Interaction):
+        super().__init__(
+            style=ButtonStyle.primary,
+            emoji="➡️",
+            row=2,
+            disabled=data_servers[interaction.guild.name]['album_list_page_index'] + 1 >=
+                     len(data_servers[interaction.guild.name]['album_list'])
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        global data_servers
+        await interaction.response.defer()
+        data_servers[interaction.guild.name]['album_list_page_index'] += 1
+        self.view.clear_items()
+
+        self.view.add_item(selecting_an_album_from_the_list(interaction))
+        self.view.add_item(album_list_prev_page(interaction))
+        self.view.add_item(album_list_prev_page(interaction))
+        await interaction.edit_original_response(
+            content=f"Страница {data_servers[interaction.guild.name]['album_list_page_index'] + 1} из "
+                    f"{len(data_servers[interaction.guild.name]['album_list'])}",
+            view=self.view
+        )
+class album_list_prev_page(Button):
+    def __init__(self, interaction: discord.Interaction):
+        super().__init__(
+            style=ButtonStyle.primary,
+            emoji="⬅️",
+            row=2,
+            disabled=data_servers[interaction.guild.name]['album_list_page_index'] - 1 < 0
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        global data_servers
+        await interaction.response.defer()
+        data_servers[interaction.guild.name]['album_list_page_index'] -= 1
+        self.view.clear_items()
+
+        self.view.add_item(selecting_an_album_from_the_list(interaction))
+        self.view.add_item(album_list_prev_page(interaction))
+        self.view.add_item(album_list_next_page(interaction))
+        await interaction.edit_original_response(
+            content=f"Страница {data_servers[interaction.guild.name]['album_list_page_index'] + 1} из "
+                    f"{len(data_servers[interaction.guild.name]['album_list'])}",
+            view=self.view
+        )
 
 
 '''
@@ -1294,7 +1494,7 @@ class mood_and_genre_prev_page(Button):
 '''
 @tree.command(name='play', description="🎧Воспроизвести трек. При вызове без аргумента - воспроизвести плейлист из списка")
 @app_commands.rename(url_or_trackname_or_filepath='ссылка_или_название')
-@app_commands.describe(url_or_trackname_or_filepath='Вы можете указать: ссылку на трек из Яндекс.Музыки или YouTube, название трека')
+@app_commands.describe(url_or_trackname_or_filepath='Ссылка на трек / альбом из Яндекс.Музыки; Ссылка на трек из YouTube; Название трека')
 async def start_play(interaction: discord.Interaction, url_or_trackname_or_filepath: str = None):
     global data_servers, settings_onyourwave
 
@@ -1440,7 +1640,10 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                         data_servers[interaction.guild.name]['stream_by_track_check']:
                     text += "радио"
                 elif data_servers[interaction.guild.name]['playlist']:
-                    text += "плейлист"
+                    if data_servers[interaction.guild.name]['album']:
+                        text += "альбом"
+                    else:
+                        text += "плейлист"
                 else:
                     text += "трек"
 
@@ -1448,9 +1651,8 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     text=text,
                     icon_url=data_servers[interaction.guild.name]['user_discord_play'].avatar
                 )
+                embed.set_thumbnail(url=data_servers[interaction.guild.name]['cover_url'])
 
-                if data_servers[interaction.guild.name]['cover_url']:
-                    embed.set_thumbnail(url=data_servers[interaction.guild.name]['cover_url'])
                 message = await interaction.channel.send(embed=embed, view=view)
                 data_servers[interaction.guild.name]['message_check'] = message
             else:
@@ -1504,10 +1706,14 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                     await interaction.channel.send("Треки в очереди закончились")
                     return
 
-    except Exception as e:
-        await interaction.channel.send(f"Произошла ошибка: {e}.")
     except asyncio.CancelledError:
         pass
+    except Exception as e:
+        try:
+            await interaction.delete_original_response()
+        except:
+            pass
+        await interaction.channel.send(f"Произошла ошибка: {e}.")
 
 @start_play.autocomplete('url_or_trackname_or_filepath')
 async def search_yandex_music(interaction: discord.Interaction, search: str):
@@ -1584,12 +1790,12 @@ async def autocomplete_log(interaction: discord.Interaction, search: str):
 async def commands(interaction: discord.Interaction):
     global data_servers
     if interaction.guild.name not in data_servers:
-        data_servers[interaction.guild.name] = data_server.copy()
+        data_servers[interaction.guild.name] = copy.deepcopy(data_server)
     command = {'/play': 'Имеет необязательный аргумент \'ссылка_или_название\'\n\n'
-                        'При вызове команды без аргумента - предложит выбрать плейлист из списка и запустит его\n\n'
+                        'При вызове команды без аргумента - предложит выбрать плейлист / радио / альбом из списка и запустит его\n\n'
                         'В аргумент можно передать:\n'
                         '1. Ссылку на видео YouTube\n'
-                        '2. Ссылку на трек Яндекс.Музыки\n'
+                        '2. Ссылку на трек / альбом из Яндекс.Музыки\n'
                         '3. Название трека (При вводе можно выбрать из выпадающего списка)\n',
                '/authorize': 'Имеет обязательный аргумент \'token\'\n\n'
                              'В аргумент нужно передать Ваш токен от аккаунта Яндекс.Музыки\n\n'
@@ -1676,7 +1882,7 @@ async def about_me(interaction: discord.Interaction):
                         'https://github.com/SapTimofey/YandexMusic\n\n'
                         'С открытым кодом библиотеки yandex_music можно ознакомиться тут:\n'
                         'https://github.com/MarshalX/yandex-music-api\n\n'
-                        'Версия бота: 0.8.1',
+                        'Версия бота: 0.8.2',
             color=0xf1ca0d
         ),
         ephemeral=True
