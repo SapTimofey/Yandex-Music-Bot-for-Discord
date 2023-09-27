@@ -16,9 +16,9 @@ class TrackListSelect(Select):
             interaction.guild.name]['track_list'][data_servers[interaction.guild.name]['track_list_page_index']]
         for item in interval:
             options.append(SelectOption(
-                label=f"{item[0]} - {item[1]}",
-                value=item[0],
-                description=item[2])
+                label=f"{item[1]} - {item[2]}",
+                value=f"{item[0]},{item[1]}",
+                description=item[3])
             )
 
         super().__init__(placeholder="Выберете трек...", min_values=1, max_values=1, options=options, row=1)
@@ -31,10 +31,10 @@ class TrackListSelect(Select):
         )
         if data_servers[interaction.guild.name]['random']:
             for i in range(len(data_servers[interaction.guild.name]['playlist'])):
-                if data_servers[interaction.guild.name]['playlist'][i].split(',')[1] == self.values[0]:
+                if data_servers[interaction.guild.name]['playlist'][i].split(',')[1] == self.values[0].split(',')[1]:
                     data_servers[interaction.guild.name]['index_play_now'] = i - 1
         else:
-            data_servers[interaction.guild.name]['index_play_now'] = int(self.values[0]) - 2
+            data_servers[interaction.guild.name]['index_play_now'] = int(self.values[0].split(',')[0]) - 1
         voice_client = interaction.guild.voice_client
         if voice_client.is_playing() or voice_client.is_paused():
             voice_client.stop()

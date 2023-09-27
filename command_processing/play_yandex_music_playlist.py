@@ -46,14 +46,16 @@ async def play_yandex_music_playlist(interaction: discord.Interaction, url_or_tr
 
                 j = 0
                 list_for_page = []
-                for i in range(len(playlist_new)):
-                    track_short = playlist_new[i]
+                index_in_array = 0
+
+                for index_in_playlist in range(len(playlist_new)):
+                    track_short = playlist_new[index_in_playlist]
                     track = client_ym.tracks(track_short.track_id)[0]
                     if track.available:
                         if index_track is None:
-                            index_track = i + 1
-                        data_servers[interaction.guild.name]['playlist'].append(f"{playlist_id},{i + 1}")
-                        data_servers[interaction.guild.name]['playlist_reserve'].append(f"{playlist_id},{i + 1}")
+                            index_track = index_in_playlist + 1
+                        data_servers[interaction.guild.name]['playlist'].append(f"{playlist_id},{index_in_playlist + 1}")
+                        data_servers[interaction.guild.name]['playlist_reserve'].append(f"{playlist_id},{index_in_playlist + 1}")
                         artists = track.artists
                         if not artists:
                             artist_all = ""
@@ -63,30 +65,31 @@ async def play_yandex_music_playlist(interaction: discord.Interaction, url_or_tr
                         if j < 24:
                             if len(track.title) > 90:
                                 track_title = track.title[:90]
-                                list_for_page.append([i + 1, track_title, artist_all])
+                                list_for_page.append([index_in_array, index_in_playlist + 1, track_title, artist_all])
                             else:
-                                list_for_page.append([i + 1, track.title, artist_all])
+                                list_for_page.append([index_in_array, index_in_playlist + 1, track.title, artist_all])
                             j += 1
                         else:
                             if len(track.title) > 90:
                                 track_title = track.title[:90]
-                                list_for_page.append([i + 1, track_title, artist_all])
+                                list_for_page.append([index_in_array, index_in_playlist + 1, track_title, artist_all])
                             else:
-                                list_for_page.append([i + 1, track.title, artist_all])
+                                list_for_page.append([index_in_array, index_in_playlist + 1, track.title, artist_all])
                             data_servers[interaction.guild.name]['track_list'].append(list_for_page)
                             list_for_page = []
                             j = 0
                         try:
                             if not data_servers[interaction.guild.name]['album']:
                                 await interaction.edit_original_response(
-                                    content=f'Загрузка плейлиста "{title}". ({i+1}/{len(playlist_new)})'
+                                    content=f'Загрузка плейлиста "{title}". ({index_in_playlist + 1}/{len(playlist_new)})'
                                 )
                             else:
                                 await interaction.edit_original_response(
-                                    content=f'Загрузка альбома "{title}". ({i+1}/{len(playlist_new)})'
+                                    content=f'Загрузка альбома "{title}". ({index_in_playlist + 1}/{len(playlist_new)})'
                                 )
                         except (discord.HTTPException, discord.NotFound, discord.Forbidden):
                             pass
+                        index_in_array += 1
                 if j > 0:
                     data_servers[interaction.guild.name]['track_list'].append(list_for_page)
             else:
