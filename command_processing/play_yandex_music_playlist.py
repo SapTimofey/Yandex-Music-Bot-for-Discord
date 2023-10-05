@@ -93,7 +93,15 @@ async def play_yandex_music_playlist(interaction: discord.Interaction, url_or_tr
                 if j > 0:
                     data_servers[interaction.guild.name]['track_list'].append(list_for_page)
             else:
-                if playlist_id == "3":
+                if data_servers[interaction.guild.name]['album']:
+                    playlist_new = []
+                    playlist_album = client_ym.albums_with_tracks(playlist_id).volumes
+                    if len(playlist_album) > 1:
+                        for item in playlist_album:
+                            playlist_new += item
+                    else:
+                        playlist_new = playlist_album[0]
+                elif playlist_id == "3":
                     playlist_new = client_ym.users_likes_tracks().tracks
                 else:
                     playlist_new = client_ym.users_playlists(playlist_id).tracks
