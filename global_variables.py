@@ -34,7 +34,7 @@ output_path = f'C:\\Users\\{user}\\Music'  # Путь к папке, где бу
 data_server = {
     'playlist': [],
     'playlist_reserve': [],
-    'playlist_title': None,
+    'track_count': 0,
     'album': False,
     'album_list': [],
     'album_list_page_index': 0,

@@ -73,9 +73,14 @@ async def play(interaction: discord.Interaction, url_or_trackname_or_filepath: s
                         play_now = f"\nТрек: {audiofile.tag.title}" + \
                                     f"\nИсполнители: {audiofile.tag.artist}"
                 else:
-                    play_now = await play_yandex_music_playlist(interaction, url_or_trackname_or_filepath)
-                    if not play_now:
-                        return
+                    if not data_servers[interaction.guild.name]['playlist']:
+                        play_now = await play_yandex_music_playlist(interaction, playlist_id=url_or_trackname_or_filepath)
+                        if not play_now:
+                            return
+                    else:
+                        play_now = await play_yandex_music_playlist(interaction, url_or_trackname_or_filepath)
+                        if not play_now:
+                            return
 
                 data_servers[interaction.guild.name]['queue_repeat'] = url_or_trackname_or_filepath
                 options = '-loglevel panic'

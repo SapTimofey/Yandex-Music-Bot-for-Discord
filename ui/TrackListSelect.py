@@ -31,8 +31,9 @@ class TrackListSelect(Select):
         )
         if data_servers[interaction.guild.name]['random']:
             for i in range(len(data_servers[interaction.guild.name]['playlist'])):
-                if data_servers[interaction.guild.name]['playlist'][i].split(',')[1] == self.values[0].split(',')[1]:
+                if data_servers[interaction.guild.name]['playlist'][i][1] == int(self.values[0].split(',')[1]):
                     data_servers[interaction.guild.name]['index_play_now'] = i - 1
+                    break
         else:
             data_servers[interaction.guild.name]['index_play_now'] = int(self.values[0].split(',')[0]) - 1
         voice_client = interaction.guild.voice_client
