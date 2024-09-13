@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import datetime
 
 import discord
 from discord import app_commands
@@ -52,6 +53,7 @@ async def start_play(interaction: discord.Interaction, url_or_trackname_or_filep
         }
 
     data_servers[interaction.guild.name] = copy.deepcopy(data_server)
+    data_servers[interaction.guild.name]['last_activity_time'] = datetime.datetime.now()
     data_servers[interaction.guild.name]['task_check_inactivity'] = \
         asyncio.create_task(check_inactivity(interaction))
 
