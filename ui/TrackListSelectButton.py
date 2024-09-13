@@ -20,8 +20,8 @@ class TrackListSelectButton(Button):
     async def callback(self, interaction: discord.Interaction):
         view = View(timeout=1200)
         view.add_item(TrackListSelect(interaction))
-        view.add_item(PrevPageButton(interaction, 'track_list'))
-        view.add_item(NextPageButton(interaction, 'track_list'))
+        view.add_item(PrevPageButton(interaction, 'TrackListSelect', 'track_list'))
+        view.add_item(NextPageButton(interaction, 'TrackListSelect', 'track_list'))
         await interaction.response.send_message(
             content=f"Страница {data_servers[interaction.guild.name]['track_list_page_index'] + 1} из "
                     f"{len(data_servers[interaction.guild.name]['track_list'])}",

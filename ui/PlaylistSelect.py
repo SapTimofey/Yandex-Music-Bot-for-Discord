@@ -189,8 +189,8 @@ class PlaylistSelect(Select):
                     self.view.clear_items()
 
                     self.view.add_item(MoodAndGenreSelect(interaction))
-                    self.view.add_item(PrevPageButton(interaction, 'mood_and_genre'))
-                    self.view.add_item(NextPageButton(interaction, 'mood_and_genre'))
+                    self.view.add_item(PrevPageButton(interaction, 'MoodAndGenreSelect', 'mood_and_genre'))
+                    self.view.add_item(NextPageButton(interaction, 'MoodAndGenreSelect', 'mood_and_genre'))
 
                     await interaction.edit_original_response(
                         content=f"Страница {data_servers[interaction.guild.name]['mood_and_genre_page_index'] + 1} из "
@@ -232,8 +232,8 @@ class PlaylistSelect(Select):
                     self.view.clear_items()
 
                     self.view.add_item(AlbumListSelect(interaction))
-                    self.view.add_item(PrevPageButton(interaction, 'album_list'))
-                    self.view.add_item(NextPageButton(interaction, 'album_list'))
+                    self.view.add_item(PrevPageButton(interaction, 'AlbumListSelect', 'album_list'))
+                    self.view.add_item(NextPageButton(interaction, 'AlbumListSelect', 'album_list'))
 
                     await interaction.edit_original_response(
                         content=f"Страница {data_servers[interaction.guild.name]['album_list_page_index'] + 1} из "
